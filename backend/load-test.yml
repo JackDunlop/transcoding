@@ -1,0 +1,59 @@
+config:
+  target: "http://localhost:3000" # Replace with your server's address
+  phases:
+    - duration: 1
+      arrivalRate: 1 # Number of new virtual users to spawn per second
+  processor: "./helper.js" # Specify the helper file
+
+scenarios:
+  - flow:
+      - function: "generateUserData"
+      - post:
+          url: "/users/register"
+          json:
+            username: "{{ username }}"
+            password: "{{ password }}" 
+            dob: "{{ DOB }}"
+            fullname: "{{ fullname }}"
+            email: "{{ email }}"
+      - post:
+          url: "/users/login"
+          json:
+            username: "{{ username }}"
+            password: "{{ password }}"
+          capture:
+            json: "$.jwtToken"
+            as: "jwtToken"
+      - function: "addAuthHeader" 
+      - post:
+          url: "/upload/new"
+          headers:
+            Authorization: "{{ authHeaders.Authorization }}"
+          formData:
+              video:
+                fromFile: "./BreakingBad.mp4" 
+          capture:
+            json: "$.metadata.newFilename"  
+            as: "filename"
+      - post:
+          url: "/transcode/video/{{ filename }}"
+          headers:
+            Authorization: "{{ authHeaders.Authorization }}"
+          json:
+            width: 180
+            bitrate: 200000
+            codec: "libx264"
+            format: "mp4"
+            framerate: 24
+            height: 320
+
+# artillery run load-test.yml
+
+
+  # - function: "generateResizeData"
+      # - get:
+      #     url: "/images/resize/{{ image }}/{{ height }}/{{ width }}"
+      # - function: "generateRotateData"
+      # - get:
+      #     url: "/images/rotate/{{ image }}/{{ degrees }}"
+  

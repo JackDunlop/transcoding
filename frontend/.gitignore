@@ -1,0 +1,28 @@
+# Node.js dependencies
+node_modules/
+
+# Build output
+build/
+
+# Log files
+*.log
+
+# Dependency directories
+node_modules/
+
+# Package lock files
+package-lock.json
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# IDE/editor files
+.vscode/
+.idea/
+
+# Generated files
+*.pdf
+
+# Others
+metadata.yml

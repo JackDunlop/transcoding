@@ -1,0 +1,10 @@
+# Node.js
+node_modules/
+package-lock.json
+Users/
+testimage.mp4
+testvideo.mp4
+testvideo2.mp4
+Large.mp4
+Medium.mp4
+.mp4
