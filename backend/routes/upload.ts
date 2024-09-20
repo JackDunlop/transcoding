@@ -8,27 +8,35 @@ var crypto = require('crypto');
 import { db } from './database'
 import fileUpload from 'express-fileupload';
 import { NewUsersVideos } from './databasetypes'
-import ffmpeg from 'fluent-ffmpeg';
+import ffmpeg, { FfprobeData } from 'fluent-ffmpeg';
 const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath); 
 router.use(fileUpload());
 import { S3Client, HeadBucketCommand, CreateBucketCommand, PutBucketTaggingCommand } from '@aws-sdk/client-s3';
+import { Readable } from 'stream';
 
+function bufferToStream(buffer: Buffer): Readable {
+  const stream = new Readable();
+  stream.push(buffer);
+  stream.push(null); 
+  return stream;
+}
 
-function checkVideoMetadata(filePath: string): Promise<ffmpeg.FfprobeData> {
+function checkVideoMetadataBuffer(fileBuffer: Buffer): Promise<FfprobeData> {
   return new Promise((resolve, reject) => {
-      ffmpeg.ffprobe(filePath, (err: Error, data: ffmpeg.FfprobeData) => {
-          if (err) {
-              reject(err);
-          } else {
-              resolve(data);
-          }
+    ffmpeg()
+      .input(bufferToStream(fileBuffer)) 
+      .ffprobe((err, data) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(data);
+        }
       });
   });
 }
-
 const S3 = require("@aws-sdk/client-s3");
 
 const bucketName = 'n11431415-assignment-two';
@@ -150,15 +158,16 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
             const ext = path.extname(videoFile.name);
             const newFilename = uniqueID + ext;
             const videoUploadPath = path.join(uploadPath, newFilename);
-            fs.writeFileSync(videoUploadPath, videoFile.data);
+            //fs.writeFileSync(videoUploadPath, videoFile.data);
             
             try {
-                const data = await checkVideoMetadata(videoUploadPath);
+                const data = await checkVideoMetadataBuffer(file.data);
                 
                 const videoStream = data.streams.find((stream) => stream.codec_type === 'video');
                 if (!videoStream) {
                     throw new Error("No video stream found in the file.");
                 }
+                const bitRate: number = typeof data.format.bit_rate === 'number' ? data.format.bit_rate : 0;
 
                 const metadata: NewUsersVideos = {
                     userid: userForeignKey,
@@ -168,7 +177,7 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                     path: videoUploadPath,
                     newFilename: newFilename,
                     duration: data.format.duration as number,
-                    bit_rate: data.format.bit_rate as number,
+                    bit_rate: bitRate,
                     codec: videoStream.codec_name as string,
                     width: videoStream.width as number,
                     height: videoStream.height as number,
@@ -176,6 +185,7 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
 
                 try {
                     await storeObject(bucketName, file, username);
+                    
                 } 
                 catch (err) {
                     return res.status(500).json({ error: true, message: err });
