@@ -80,11 +80,11 @@ const createBucket = async (bucketName: string, qutUsername: string, purpose: st
 
 
   
-  const storeObject = async ( bucketName: string, file: fileUpload.UploadedFile, username: string): Promise<void> => {
+  const storeObject = async ( bucketName: string, objectKey: string, file: fileUpload.UploadedFile, username: string): Promise<void> => {
     const s3Client = new S3Client({ region: 'ap-southeast-2' });
   
     try {
-      const objectKey = `user/${username}/uploaded/${file.name}`;
+      //const objectKey = `user/${username}/uploaded/${file.name}`;
       await s3Client.send(
         new S3.PutObjectCommand({
           Bucket: bucketName,
@@ -148,17 +148,12 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
 
         if (file) {
             const videoFile = Array.isArray(files['video']) ? files['video'][0] : files['video'];
-            const uploadPath = path.join(__dirname, '../Users', username, 'uploaded', 'videos');
-
-            if (!fs.existsSync(uploadPath)) {
-                fs.mkdirSync(uploadPath, { recursive: true });
-            }
+          
 
             const uniqueID = crypto.randomBytes(16).toString("hex");
             const ext = path.extname(videoFile.name);
             const newFilename = uniqueID + ext;
-            const videoUploadPath = path.join(uploadPath, newFilename);
-            //fs.writeFileSync(videoUploadPath, videoFile.data);
+        
             
             try {
                 const data = await checkVideoMetadataBuffer(file.data);
@@ -168,13 +163,13 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                     throw new Error("No video stream found in the file.");
                 }
                 const bitRate: number = typeof data.format.bit_rate === 'number' ? data.format.bit_rate : 0;
-
+                const objectKey = `user/${username}/uploaded/${newFilename}`;
                 const metadata: NewUsersVideos = {
                     userid: userForeignKey,
                     originalName: videoFile.name,
                     mimeType: videoFile.mimetype,
                     size: videoFile.size,
-                    path: videoUploadPath,
+                    path: objectKey,
                     newFilename: newFilename,
                     duration: data.format.duration as number,
                     bit_rate: bitRate,
@@ -184,7 +179,7 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                 };
 
                 try {
-                    await storeObject(bucketName, file, username);
+                    await storeObject(bucketName, objectKey,file, username);
                     
                 } 
                 catch (err) {
@@ -195,9 +190,6 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                 return res.status(200).json({ error: false, message: "Video stored successfully.", MetaData: metadata });
 
             } catch (err) {
-                if (fs.existsSync(videoUploadPath)) {
-                    fs.unlinkSync(videoUploadPath);
-                }
                 return res.status(500).json({ error: true, message: "Error extracting video metadata", err });
             }
         }
