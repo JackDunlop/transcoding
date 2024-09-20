@@ -14,21 +14,95 @@ const ffprobePath = require('@ffprobe-installer/ffprobe').path;
 ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath); 
 router.use(fileUpload());
+import { S3Client, HeadBucketCommand, CreateBucketCommand, PutBucketTaggingCommand } from '@aws-sdk/client-s3';
 
 
 function checkVideoMetadata(filePath: string): Promise<ffmpeg.FfprobeData> {
-    return new Promise((resolve, reject) => {
-        ffmpeg.ffprobe(filePath, (err: Error, data: ffmpeg.FfprobeData) => {
-            if (err) {
-                reject(err);
-            } else {
-                resolve(data);
-            }
-        });
-    });
+  return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(filePath, (err: Error, data: ffmpeg.FfprobeData) => {
+          if (err) {
+              reject(err);
+          } else {
+              resolve(data);
+          }
+      });
+  });
 }
 
+const S3 = require("@aws-sdk/client-s3");
+
+const bucketName = 'n11431415-assignment-two';
+const qutUsername = 'n11431415@qut.edu.au';
+const purpose = 'assignment-two';
+
+const createBucket = async (bucketName: string, qutUsername: string, purpose: string): Promise<void> => {
+    const s3Client = new S3Client({ region: 'ap-southeast-2' });
+  
+    try {
+      await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
+      console.log(`Bucket "${bucketName}" already exists.`);
+    } catch (error: any) {
+      if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+        try {
+          await s3Client.send(new CreateBucketCommand({ Bucket: bucketName }));
+          console.log(`Bucket "${bucketName}" created successfully.`);
+  
+          await s3Client.send(
+            new PutBucketTaggingCommand({
+              Bucket: bucketName,
+              Tagging: {
+                TagSet: [
+                  { Key: 'qut-username', Value: qutUsername },
+                  { Key: 'purpose', Value: purpose },
+                ],
+              },
+            })
+          );
+          console.log(`Tags added to bucket "${bucketName}".`);
+        } catch (createError) {
+          console.error('Error creating the bucket:', createError);
+          throw new Error('Error creating the bucket.');
+        }
+      } else {
+        console.error('Error checking bucket existence:', error);
+        throw new Error('Error checking bucket existence.');
+      }
+    }
+  };
+
+
+  
+  const storeObject = async ( bucketName: string, file: fileUpload.UploadedFile, username: string): Promise<void> => {
+    const s3Client = new S3Client({ region: 'ap-southeast-2' });
+  
+    try {
+      const objectKey = `user/${username}/uploaded/${file.name}`;
+      await s3Client.send(
+        new S3.PutObjectCommand({
+          Bucket: bucketName,
+          Key: objectKey,
+          Body: file.data, 
+          ContentType: file.mimetype, 
+        })
+      );
+  
+      console.log(`File "${file.name}" uploaded successfully to "${bucketName}/${objectKey}".`);
+    } catch (err) {
+      console.error('Error uploading the file:', err);
+      throw new Error('Error uploading the file.');
+    }
+  };
+
 router.post('/new', authorization, async (req: Request, res: Response, next: NextFunction) => {
+
+
+    try {
+        await createBucket(bucketName, qutUsername, purpose);
+    } 
+    catch (err) {
+        return res.status(500).json({ error: true, message: err });
+    }
+
     const files = req.files as { [fieldname: string]: fileUpload.UploadedFile | fileUpload.UploadedFile[] };
     if (!files || Object.keys(files).length === 0) {
         return res.status(400).json({ error: true, message: "No file uploaded" });
@@ -76,10 +150,8 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
             const ext = path.extname(videoFile.name);
             const newFilename = uniqueID + ext;
             const videoUploadPath = path.join(uploadPath, newFilename);
-
             fs.writeFileSync(videoUploadPath, videoFile.data);
-
-
+            
             try {
                 const data = await checkVideoMetadata(videoUploadPath);
                 
@@ -101,6 +173,13 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                     width: videoStream.width as number,
                     height: videoStream.height as number,
                 };
+
+                try {
+                    await storeObject(bucketName, file, username);
+                } 
+                catch (err) {
+                    return res.status(500).json({ error: true, message: err });
+                }
 
                 await db.insertInto('uservideos').values(metadata).executeTakeFirst();
                 return res.status(200).json({ error: false, message: "Video stored successfully.", MetaData: metadata });
