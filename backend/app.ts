@@ -27,7 +27,7 @@ app.use(cors());
 app.use('/', indexRouter);
 app.use('/users', usersRouter);
 app.use('/upload', uploadRouter);
-app.use('/transcode', transcodeRouter)
+app.use('/transcode', transcodeRouter);
 app.use('/download', downloadRouter);
 // catch 404 and forward to error handler
 app.use(function (req, res, next) {

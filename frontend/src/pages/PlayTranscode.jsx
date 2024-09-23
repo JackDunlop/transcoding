@@ -31,7 +31,6 @@ export default function PlayTranscode() {
         .then(response => response.json())
         .then(data => {
           if (!data.Error) {
-            console.log(data);
             setRowData(data.transcodedList);
           } else {
             console.error("Error fetching data:", data.Message);
@@ -45,11 +44,10 @@ export default function PlayTranscode() {
     const onRowClicked = (row) => {
       const newFileNamePreSplit = row.data.newFilename;
       const newFileNameSplit = newFileNamePreSplit.split('.')
-      const filename = newFileNameSplit[0]
+      const filename = newFileNamePreSplit
       const originalnamePreSplit = row.data.originalName;
       const originalnameSplit = originalnamePreSplit.split('.')
       const originalname = originalnameSplit[0]
-      console.log(originalname);
       navigate(`/stream/${filename}`, {
         state: { filename , originalname} 
       });

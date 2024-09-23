@@ -92,7 +92,6 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
     const expire = Math.floor(Date.now() / 1000) + jwtExpireTimeIn;
     const secret = process.env.JWT_SECRET;
     if (!secret) {
-      console.error('JWT_SECRET environment variable is not defined');
       return res.status(500).json({ Error: true, Message: 'Internal Server Error: JWT_SECRET not defined' });
     }
     const jwtToken = jwt.sign({ username, expire }, secret);
@@ -101,7 +100,6 @@ router.post('/login', async (req: Request, res: Response, next: NextFunction) =>
 
 
   } catch (Error) {
-    console.log(Error);
     return res.status(500).json({ Error: true, Message: 'Invalid' });
   }
 });
@@ -116,45 +114,19 @@ router.post('/logout', (req: Request, res: Response) => {
 });
 
 
-interface FileStructure {
-  [key: string]: FileStructure | string;
-}
-
-
-
-
-function buildFileStructure(dirPath: string): FileStructure {
-  const result: FileStructure = {};
-  const files = fs.readdirSync(dirPath);
-
-  files.forEach((file) => {
-    const fullPath = path.join(dirPath, file);
-    const stat = fs.statSync(fullPath);
-
-    if (stat.isDirectory()) {
-      result[file] = buildFileStructure(fullPath);
-    } else {
-      const baseName = path.basename(file, path.extname(file));
-      result[file] = baseName;
-    }
-  });
-
-  return result;
-}
-
 interface ListReturn {
-  videoNameUploaded: string
-  videoNameTypeUploaded: string
-  originalName: string
-  mimeType: string
-  size: number
-  duration: number
-  bit_rate: number
-  codec: string
-  width: number
-  height: number
-
+  videoNameUploaded: string;
+  videoNameTypeUploaded: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  duration: number;
+  bit_rate: number;
+  codec: string;
+  width: number;
+  height: number;
 }
+
 router.get('/list', authorization, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const user = (req as any).user;
@@ -164,58 +136,32 @@ router.get('/list', authorization, async (req: Request, res: Response, next: Nex
       return res.status(500).json({ error: true, message: "Username failed to be retrieved" });
     }
 
-    const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
+    // Check if user exists in the database
+    const checkUserIsExisting = await db
+      .selectFrom('users')
+      .selectAll()
+      .where('username', '=', username)
+      .execute();
+
     if (checkUserIsExisting.length === 0) {
-      return res.status(400).json({ Error: true, Message: 'User does not exist! using jwt without a registered user.' });
+      return res.status(400).json({
+        Error: true,
+        Message: 'User does not exist! using jwt without a registered user.',
+      });
     }
 
-    const userDir = path.join(__dirname, '../Users', username);
-    if (!fs.existsSync(userDir)) {
-      return res.status(404).json({ error: true, message: "User directory not found" });
+    const userIDFind = await db.selectFrom('users').select('id').where('username', '=', username).execute();
+    if (userIDFind.length < 0) {
+      return res.status(400).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
+    }
+    const userID = userIDFind[0].id;
+
+    const userUploadedVideos = await db.selectFrom("uservideos").select(['originalName', 'mimeType', 'size', 'duration', 'bit_rate', 'codec', 'width', 'height', 'newFilename']).where('userid', '=', userID).execute();
+    if (userUploadedVideos.length < 0) {
+      return res.status(200).json({ Error: false, Message: 'You have not uploaded anything.' });
     }
 
-    const fileStructure = buildFileStructure(userDir);
-    const uploadedDir = fileStructure.uploaded;
-    const videoInfoArray: ListReturn[] = [];
-
-    if (uploadedDir && typeof uploadedDir !== 'string' && 'videos' in uploadedDir) {
-      const videosDir = uploadedDir.videos;
-      if (videosDir && typeof videosDir !== 'string') {
-        const videoEntries = Object.entries(videosDir);
-        for (const [fileName, baseName] of videoEntries) {
-          if (typeof baseName === 'string') {
-            console.log(baseName);
-            const videoInfo = await db.selectFrom('uservideos').selectAll().where('newFilename', '=', fileName).execute();
-            let videoDetails: ListReturn;
-            if (videoInfo.length > 0) {
-              const videoMetadata = videoInfo[0]; 
-              videoDetails = {
-                videoNameUploaded: fileName,
-                videoNameTypeUploaded: baseName,
-                originalName: videoMetadata.originalName,
-                mimeType: videoMetadata.mimeType,
-                size: videoMetadata.size,
-                duration: videoMetadata.duration,
-                bit_rate: videoMetadata.bit_rate,
-                codec: videoMetadata.codec,
-                width: videoMetadata.width,
-                height: videoMetadata.height,
-              };
-            } else {
-              return res.status(500).json({ Error: true, Message: 'Error finding your videos' });
-            }
-            videoInfoArray.push(videoDetails);
-          }
-        }
-      }
-    }
-
-
-
-   
-    
-    return res.status(200).json({ Error: false, FileStructure: videoInfoArray });
-
+    return res.status(200).json({ Error: false, userUploadedVideos: userUploadedVideos });
   } catch (error) {
     next(error);
   }

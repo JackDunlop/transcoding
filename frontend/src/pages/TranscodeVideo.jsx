@@ -21,7 +21,6 @@ export default function Transcodevideo() {
     { headerName: "Height", field: "height" },
   ]);
 
-  // Fetch video data from the API
   useEffect(() => {
     const url = `${API_URL}/users/list`;
     fetch(url, {
@@ -32,7 +31,7 @@ export default function Transcodevideo() {
       .then(response => response.json())
       .then(data => {
         if (!data.Error) {
-          setRowData(data.FileStructure); 
+          setRowData(data.userUploadedVideos); 
         } else {
           console.error("Error fetching data:", data.Message);
         }
@@ -42,10 +41,10 @@ export default function Transcodevideo() {
       });
   }, []);
 
-  // Handle row click event and navigate with state
   const onRowClicked = (row) => {
-    const videoNameTypeUploaded = row.data.videoNameTypeUploaded;
-    const videoNameUploaded = row.data.videoNameUploaded;
+    const newFilename = row.data.newFilename;
+    const videoNameTypeUploaded = newFilename.split('.')[0];
+    const videoNameUploaded = newFilename;
     
     navigate(`/transcodevideo/${videoNameTypeUploaded}`, {
       state: { videoNameUploaded } 
