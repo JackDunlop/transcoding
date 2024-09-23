@@ -5,6 +5,7 @@ const authorization = require("../middleware/auth.ts");
 var path = require('path');
 var fs = require('fs');
 var crypto = require('crypto');
+
 import { db } from './database'
 import fileUpload from 'express-fileupload';
 import { NewUsersVideos } from './databasetypes'
@@ -46,15 +47,12 @@ const purpose = 'assignment-two';
 const createBucket = async (bucketName: string, qutUsername: string, purpose: string): Promise<void> => {
     const s3Client = new S3Client({ region: 'ap-southeast-2' });
   
-    try {
-      await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
-      console.log(`Bucket "${bucketName}" already exists.`);
-    } catch (error: any) {
-      if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
+   try {
+     await s3Client.send(new HeadBucketCommand({ Bucket: bucketName }));
+   } catch (error: any) {
+     if (error.name === 'NotFound' || error.$metadata?.httpStatusCode === 404) {
         try {
           await s3Client.send(new CreateBucketCommand({ Bucket: bucketName }));
-          console.log(`Bucket "${bucketName}" created successfully.`);
-  
           await s3Client.send(
             new PutBucketTaggingCommand({
               Bucket: bucketName,
@@ -66,16 +64,14 @@ const createBucket = async (bucketName: string, qutUsername: string, purpose: st
               },
             })
           );
-          console.log(`Tags added to bucket "${bucketName}".`);
         } catch (createError) {
-          console.error('Error creating the bucket:', createError);
           throw new Error('Error creating the bucket.');
         }
-      } else {
-        console.error('Error checking bucket existence:', error);
-        throw new Error('Error checking bucket existence.');
-      }
-    }
+     }
+      else {
+       throw new Error('Error checking bucket existence.');
+     }
+   }
   };
 
 
@@ -93,10 +89,8 @@ const createBucket = async (bucketName: string, qutUsername: string, purpose: st
           ContentType: file.mimetype, 
         })
       );
-  
-      console.log(`File "${file.name}" uploaded successfully to "${bucketName}/${objectKey}".`);
+
     } catch (err) {
-      console.error('Error uploading the file:', err);
       throw new Error('Error uploading the file.');
     }
   };
@@ -163,7 +157,7 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
                     throw new Error("No video stream found in the file.");
                 }
                 const bitRate: number = typeof data.format.bit_rate === 'number' ? data.format.bit_rate : 0;
-                const objectKey = `user/${username}/uploaded/${newFilename}`;
+                const objectKey = `users/${username}/uploaded/${newFilename}`;
                 const metadata: NewUsersVideos = {
                     userid: userForeignKey,
                     originalName: videoFile.name,

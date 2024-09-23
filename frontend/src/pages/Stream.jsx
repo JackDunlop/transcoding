@@ -20,21 +20,21 @@ export default function Stream() {
         if (filename && token) {
             const fetchVideo = async () => {
                 try {
-                    console.log(`API URL ${API_URL}`)
+                   
                     const response = await fetch(`${API_URL}/${filename}`, {
                         method: 'GET',
                         headers: {
                             'Authorization': `Bearer ${token}`,
                         },
-                    });
-
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        const url = URL.createObjectURL(blob);
-                        setVideoSrc(url);
-                    } else {
-                        console.error('Error fetching video:', await response.json());
-                    }
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (!data.error) {
+                            setVideoSrc(data.streamUrl.url); 
+                        } else {
+                            console.error("Error fetching data:", data.message);
+                        }
+                    })
                 } catch (error) {
                     console.error('Fetch error:', error);
                 }

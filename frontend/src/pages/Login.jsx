@@ -29,6 +29,7 @@ export default function Login() {
       .then((data) => {
         if (data.jwtToken) {
           localStorage.setItem("token", data.jwtToken);
+          localStorage.setItem("username", usernameSubmitted);
           setResponse("Success! You are now logged in! Enjoy!");
           setSuccessSubmission(true);
         }
@@ -46,6 +47,7 @@ export default function Login() {
       <LoginInput onSubmission={handleSubmission} />
       {successSubmission && (
         <p className="login-success">{responseMessage}</p>
+        
       )}
       {!successSubmission && responseMessage && (
         <p className="login-response">{responseMessage}</p>

@@ -17,43 +17,31 @@ export default function TranscodeVideoPage() {
     const [status, setStatus] = useState('');
     const [progress, setProgress] = useState(0);
     const [transcodeID, setTranscodeID] = useState('');
-    const [isUnmounting, setIsUnmounting] = useState(false); 
-
-    console.log(isUnmounting);
 
     useEffect(() => {
-        const savedTranscodeID = localStorage.getItem('transcodeID');
-        if (savedTranscodeID) {
-            setTranscodeID(savedTranscodeID);
-            startPolling(savedTranscodeID);
-        }
-
-        const handleBeforeUnload = (event) => {
-            setIsUnmounting(true); 
+        const handleBeforeUnload = () => {
             killTranscodingProcess();
         };
 
         window.addEventListener('beforeunload', handleBeforeUnload);
 
         return () => {
-            setIsUnmounting(true); 
             window.removeEventListener('beforeunload', handleBeforeUnload);
             killTranscodingProcess();
         };
-    }, [transcodeID]);
+    }, []);
 
     const killTranscodingProcess = () => {
-        if (transcodeID && isUnmounting) {
-            setIsUnmounting(false); 
-            fetch(`${API_URL}/transcode/kill/${transcodeID}`, {
-                method: 'POST',
+        const storedTranscodeID = transcodeID || localStorage.getItem('transcodeID');
+        if (storedTranscodeID) {
+            fetch(`${API_URL}/transcode/kill/${storedTranscodeID}`, {
+                method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${localStorage.getItem('token')}`,
                 },
-                
+                keepalive: true,
             })
-            .then(() => {navigate('/', { replace: true });})
             .catch((error) => {
                 console.error('Error stopping FFmpeg process:', error);
             });
@@ -65,7 +53,6 @@ export default function TranscodeVideoPage() {
             alert('No video to transcode');
             return;
         }
-        setIsUnmounting(false);
         const url = `${API_URL}/transcode/video/${videoNameUploaded}`;
         fetch(url, {
             method: 'POST',
@@ -91,7 +78,6 @@ export default function TranscodeVideoPage() {
                 if (transcodeID) {
                     localStorage.setItem('transcodeID', transcodeID); 
                     setTranscodeID(transcodeID); 
-                    setIsUnmounting(false); 
                     startPolling(transcodeID);
                     setStatus('Transcoding started');
                 }
@@ -133,7 +119,13 @@ export default function TranscodeVideoPage() {
     };
 
     const handleDownload = () => {
-        const url = `${API_URL}/download/${transcodeID}`;
+        const videoNameExt = videoNameUploaded.split(".")[0];
+        const videoNameWithoutExt = videoNameUploaded.split(".")[1];
+        const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
+        const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+        const username = localStorage.getItem("username");
+        const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
+        const url = `${API_URL}/download/${videoNameWithTranscodeWithExt}`;
         fetch(url, {
             method: 'GET',
             headers: {

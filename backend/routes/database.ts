@@ -6,7 +6,7 @@ import { Kysely, MysqlDialect } from 'kysely'
 const dialect = new MysqlDialect({
     pool: createPool({
         database: 'cloudcomputing',
-        host: 'mysql',
+        host: '127.0.0.1', //mysql
         user: 'root',
         password: 'root',
         port: 3306,
