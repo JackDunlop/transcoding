@@ -41,15 +41,21 @@ module.exports = async function (req: Request, res: Response, next: NextFunction
         res.status(401).json({ error: true, message: "Token has been blacklisted (You logged out!)" });
         return;
     }
-
     try {
-        // Verify the token using aws-jwt-verify
+
         const payload = await verifier.verify(token);
-        (req as any).user = payload;
-    } catch (error) {
-        res.status(401).json({ error: true, message: "Invalid or expired JWT token" });
+        const username = payload['username'] || payload['cognito:username'];
+        const groups = payload['cognito:groups'] || []; 
+    
+   
+        (req as any).user = {
+          username,
+          groups,
+        };
+      } catch (error) {
+        res.status(401).json({ error: true, message: 'Invalid or expired JWT token' });
         return;
-    }
+      }
 
     next();
 };

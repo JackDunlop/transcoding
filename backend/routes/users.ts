@@ -23,6 +23,7 @@ import {
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import QRCode from 'qrcode'; 
+import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
 
 
 
@@ -251,6 +252,102 @@ router.post('/verify-mfa', async (req: Request, res: Response) => {
   }
 });
 
+const bucketName = 'n11431415-assignment-two';
+
+const deleteObject = async (bucketName: string, objectKey: string) => {
+  const s3Client = new S3Client({ region: 'ap-southeast-2' });
+
+  try {
+    const command = new DeleteObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+    });
+    const response = await s3Client.send(command);
+    return response;
+  } catch (err) {
+    throw err;
+  }
+};
+// users/delete/:key
+router.post('/delete', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = (req as any).user;
+    const username = user?.username;
+    const groups = user?.groups || [];
+
+    if (!groups.includes('admin')) {
+      return res.status(403).json({ error: true, message: 'Access denied. Admin privileges are required.' });
+    }
+
+    if (!username || typeof username !== 'string' || username.trim() === '') {
+      return res.status(500).json({ error: true, message: "Username failed to be retrieved" });
+    }
+
+    const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
+    if (checkUserIsExisting.length === 0) {
+      return res.status(400).json({ Error: true, Message: 'User does not exist! Using JWT without a registered user.' });
+    }
+
+    const { key } = req.body;
+    if (!key) {
+      return res.status(400).json({ error: true, message: 'Key is required.' });
+    }
+
+    await deleteObject(bucketName, key);
+    const findTranscodedVideo = await db.deleteFrom('uservideotranscoded').where('path', '=', key).execute();
+
+
+    res.status(200).json({ message: 'Object deleted successfully.' });
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+router.get('/listtranscodedadmin', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = (req as any).user;
+    const username = user?.username;
+    const groups = user?.groups || []; // Assuming 'groups' is an array of group names
+
+    // Check if the user is in the admin group
+    if (!groups.includes('admin')) {
+      return res.status(403).json({ error: true, message: 'Access denied. Admin privileges are required.' });
+    }
+
+    if (!username || typeof username !== 'string' || username.trim() === '') {
+      return res.status(500).json({ error: true, message: "Username failed to be retrieved" });
+    }
+
+    const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
+    if (checkUserIsExisting.length === 0) {
+      return res.status(400).json({ Error: true, Message: 'User does not exist! Using JWT without a registered user.' });
+    }
+
+    const userTranscodedIDFind = await db.selectFrom('users').select('id').where('username', '=', username).execute();
+    if (userTranscodedIDFind.length === 0) {
+      return res.status(400).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
+    }
+
+    const userTranscodedID = userTranscodedIDFind[0].id;
+
+    const usersTranscodedVideos = await db
+      .selectFrom('uservideotranscoded')
+      .select(['originalName', 'mimeType', 'size', 'duration', 'bit_rate', 'codec', 'width', 'height', 'newFilename', 'path'])
+      .execute();
+
+    if (usersTranscodedVideos.length === 0) {
+      return res.status(200).json({ Error: false, Message: 'You have not uploaded anything.' });
+    }
+
+    return res.status(200).json({ Error: false, transcodedList: usersTranscodedVideos });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
+
 const { OAuth2Client } = require('google-auth-library');
 const googleClient = new OAuth2Client('868548258247-hodf86aqk5e8u3tjkv4ttm3891hbkqdr.apps.googleusercontent.com');
 
@@ -303,18 +400,7 @@ router.post('/logout', (req: Request, res: Response) => {
 });
 
 
-interface ListReturn {
-  videoNameUploaded: string;
-  videoNameTypeUploaded: string;
-  originalName: string;
-  mimeType: string;
-  size: number;
-  duration: number;
-  bit_rate: number;
-  codec: string;
-  width: number;
-  height: number;
-}
+
 
 router.get('/list', authorization, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -352,7 +438,7 @@ router.get('/list', authorization, async (req: Request, res: Response, next: Nex
 
     return res.status(200).json({ Error: false, userUploadedVideos: userUploadedVideos });
   } catch (error) {
-    next(error);
+    return res.status(400).json({ Error: true, Message: error });
   }
 });
 
@@ -385,7 +471,7 @@ router.get('/listtranscoded', authorization, async (req: Request, res: Response,
     return res.status(200).json({ Error: false, transcodedList: usersTranscodedVideos });
 
   } catch (error) {
-    next(error);
+    return res.status(400).json({ Error: true, Message: error });
   }
 });
 

@@ -12,6 +12,7 @@ import Logout from "./pages/Logout"
 import Transcodevideo from './pages/TranscodeVideo';
 import ListOfTranscodedVideos from './pages/ListOfTranscodedVideos';
 import ListOfUploadedVideos from './pages/ListOfUploadedVideos';
+import ListOfTranscodedVideosAdmin from './pages/ListOfTranscodedAdminVideos';
 import UploadVideo from './pages/UploadVideo';
 import TranscodeVideoPage from './pages/TranscodeVideoPage';
 import PlayTranscode from './pages/PlayTranscode';
@@ -43,6 +44,7 @@ function App() {
           <Route path="/playtranscode" element={<PlayTranscode />} />
           <Route path="/transcodevideo/:videoNameTypeUploaded" element={<TranscodeVideoPage />} />
           <Route path="/stream/:filename" element={<Stream />} />
+          <Route path="/listoftranscodedvideosadmin" element={<ListOfTranscodedVideosAdmin />} />
         </Routes>
         <Footer />
       </div>
