@@ -35,7 +35,6 @@ export default function Logout() {
                 }
             })
             .catch((error) => {
-                console.error(error);
                 setResponse(error.message);
                 setSuccessSubmission(false);
             });

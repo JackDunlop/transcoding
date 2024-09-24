@@ -9,15 +9,17 @@ export default function Register() {
   const [password, setPassword] = useState("");
   const [dob, setDob] = useState("");
   const [fullname, setFullname] = useState("");
+  const [phone, setPhone] = useState("");
   const [responseMessage, setResponse] = useState("");
   const [successSubmission, setSuccessSubmission] = useState(false);
 
-  const handleSubmission = (submittedUsername, submittedEmail, submittedPassword, submittedDob, submittedFullname) => {
+  const handleSubmission = (submittedUsername, submittedEmail, submittedPassword, submittedDob, submittedFullname, submittedPhone) => {
     setUsername(submittedUsername);
     setEmail(submittedEmail);
     setPassword(submittedPassword);
     setDob(submittedDob);
     setFullname(submittedFullname);
+    setPhone(submittedPhone);
     const url = `${API_URL}/users/register`;
 
     return fetch(url, {
@@ -31,6 +33,7 @@ export default function Register() {
         password: submittedPassword,
         dob: submittedDob,
         fullname: submittedFullname,
+        phone: submittedPhone
       })
     })
       .then((res) => res.json())

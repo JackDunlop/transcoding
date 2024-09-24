@@ -23,6 +23,7 @@ export default function UploadVideo() {
   
         try {
             const token = localStorage.getItem('token');
+            console.log("HERE" + token);
             const response = await fetch(url, {
                 method: 'POST',
                 headers: {

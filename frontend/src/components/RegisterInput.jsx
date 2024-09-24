@@ -6,6 +6,7 @@ function RegisterInput({ onSubmission }) {
     const [innerPassword, setInnerPassword] = useState("");
     const [innerDob, setInnerDob] = useState("");
     const [innerFullname, setInnerFullname] = useState("");
+    const [innerPhone, setInnerPhone] = useState("");
     const [errorEmail, setErrorEmail] = useState(null);
     const [errorPassword, setErrorPassword] = useState(null);
 
@@ -38,7 +39,7 @@ function RegisterInput({ onSubmission }) {
             console.log("Cannot submit, errors present or inputs are empty.");
             return;
         }
-        onSubmission(innerUsername, innerEmail, innerPassword, innerDob, innerFullname);
+        onSubmission(innerUsername, innerEmail, innerPassword, innerDob, innerFullname, innerPhone);
     };
 
     return (
@@ -72,6 +73,17 @@ function RegisterInput({ onSubmission }) {
                     value={innerDob}
                     onChange={(e) => setInnerDob(e.target.value)}
                     placeholder="Date of Birth"
+                    className="input-field"
+                />
+
+                <input
+                    aria-labelledby="register-input-button"
+                    name="phone"
+                    id="phone"
+                    type="phone"
+                    value={innerPhone}
+                    onChange={(e) => setInnerPhone(e.target.value)}
+                    placeholder="Phone"
                     className="input-field"
                 />
                 <input

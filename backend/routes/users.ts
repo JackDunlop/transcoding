@@ -1,6 +1,5 @@
 var express = require('express');
 var router = express.Router();
-var jwt = require('jsonwebtoken');
 var bcrypt = require('bcrypt');
 import fs from 'fs';
 import path from 'path';
@@ -10,6 +9,25 @@ import { Request, Response, NextFunction } from 'express';
 import { db } from './database'
 import { UserUpdate, User, NewUser } from './databasetypes'
 const authorization = require("../middleware/auth.ts");
+const Cognito = require("@aws-sdk/client-cognito-identity-provider");
+import {
+  CognitoIdentityProviderClient,
+  InitiateAuthCommand,
+  RespondToAuthChallengeCommand,
+  AuthFlowType,
+  InitiateAuthCommandInput,
+  InitiateAuthCommandOutput,
+  RespondToAuthChallengeCommandInput,
+  RespondToAuthChallengeCommandOutput,SignUpCommand,AssociateSoftwareTokenCommand,VerifySoftwareTokenCommand
+} from '@aws-sdk/client-cognito-identity-provider';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
+import QRCode from 'qrcode'; 
+
+
+
+const clientId = "90agsomhqesnc58a4jerenl72";
+const userPoolId = "ap-southeast-2_oOgmb1Jdz";
 
 router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
   const username: string = req.body.username;
@@ -17,11 +35,22 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
   const DOB: string = req.body.dob;
   const fullname: string = req.body.fullname;
   const email: string = req.body.email;
+  const phone: string = req.body.phone;
 
-  if (!username || !password || !DOB || !fullname || !email) {
+  if (!username || !password || !DOB || !fullname || !email || !phone) {
     res.status(400).json({ Error: true, Message: 'Missing Username, Password, DOB, Fullname, or Email' });
     return;
   }
+
+
+    const phoneNumber = phone;
+    const phoneNumberParsed = parsePhoneNumberFromString(phoneNumber, 'AU'); 
+
+    if (!phoneNumberParsed || !phoneNumberParsed.isValid()) {
+      return res.status(400).json({ Error: true, Message: 'Invalid phone number format.' });
+    }
+
+    const e164PhoneNumber = phoneNumberParsed.format('E.164');
 
   try {
     const checkUserIsExisiting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
@@ -39,26 +68,36 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
     const saltRounds = 10;
     const hash = bcrypt.hashSync(password, saltRounds);
 
+    const client = new Cognito.CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
+    const command = new Cognito.SignUpCommand({
+      ClientId: clientId,
+      Username: username,
+      Password: password,
+      UserAttributes: [{ Name: "email", Value: email }],
+    });
+
+    try {
+      const cognitoResponse = await client.send(command);
+      
+    } catch (cognitoError) {
+      
+      return res.status(500).json({ Error: true, Message: 'Cognito sign-up failed', cognitoError });
+    }
+
+
+  
+   
+
     const newUser: NewUser = {
       username: username,
       hash: hash,
       DOB: DOB,
       fullname: fullname,
-      email: email
+      email: email,
+      phone: e164PhoneNumber
     };
 
     await db.insertInto('users').values(newUser).executeTakeFirst();
-
-
-    const userDir = path.join(USERS_DIRECTORY, username);
-    const uploadDir = path.join(userDir, 'uploaded');
-    const videosDir = path.join(uploadDir, 'videos');
-
-
-    fs.mkdirSync(userDir, { recursive: true });
-    fs.mkdirSync(uploadDir, { recursive: true });
-    fs.mkdirSync(videosDir, { recursive: true });
-
 
     return res.status(201).json({ Error: false, Message: 'User successfully added' });
   } catch (error) {
@@ -66,43 +105,193 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
+const accessVerifier = CognitoJwtVerifier.create({
+  userPoolId: userPoolId,
+  tokenUse: 'access',
+  clientId: clientId,
+});
 
-router.post('/login', async (req: Request, res: Response, next: NextFunction) => {
-  const username: string = req.body.username;
-  const password: string = req.body.password;
+const idVerifier = CognitoJwtVerifier.create({
+  userPoolId: userPoolId,
+  tokenUse: 'id',
+  clientId: clientId,
+});
+
+
+router.post('/login', async (req: Request, res: Response) => {
+  const { username, password } = req.body;
 
   if (!username || !password) {
     return res.status(400).json({ Error: true, Message: 'Missing Username and Password' });
   }
 
   try {
+    const client = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
 
-    const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
 
-    if (checkUserIsExisting.length === 0) {
-      return res.status(400).json({ Error: true, Message: 'User does not exist.' });
+    const initiateAuthCommandInput: InitiateAuthCommandInput = {
+      AuthFlow: AuthFlowType.USER_PASSWORD_AUTH, 
+      AuthParameters: {
+        USERNAME: username,
+        PASSWORD: password,
+      },
+      ClientId: clientId,
+    };
+    const response = await client.send(new InitiateAuthCommand(initiateAuthCommandInput));
+
+    if (response.ChallengeName === 'MFA_SETUP') {
+      const associateCommand = new AssociateSoftwareTokenCommand({
+        Session: response.Session,
+      });
+
+      const associateResponse = await client.send(associateCommand);
+      const secretCode = associateResponse.SecretCode;
+
+      const otpauthUrl = `otpauth://totp/YourAppName:${username}?secret=${secretCode}&issuer=AwesomeTranscoding`;
+
+
+      QRCode.toDataURL(otpauthUrl, (err, url) => {
+        if (err) {
+          return res.status(500).json({ Error: true, Message: 'Failed to generate QR code', error: err });
+        }
+
+        return res.status(200).json({
+          Message: 'Please complete the MFA setup by scanning the QR code with your authenticator app.',
+          qrCodeUrl: url, 
+          Session: associateResponse.Session,
+        });
+      });
+    
+    } 
+    else if (response.ChallengeName === 'SOFTWARE_TOKEN_MFA') {
+      return res.status(200).json({
+        Message: 'Please enter the MFA code from your authenticator app.',
+        Session: response.Session,
+      });}
+    else if (response.AuthenticationResult) {
+      const { IdToken, AccessToken, TokenType, ExpiresIn } = response.AuthenticationResult;
+      return res.status(200).json({
+        idToken: IdToken,
+        accessToken: AccessToken,
+        tokenType: TokenType,
+        expiresIn: ExpiresIn,
+      });
+    } else {
+      return res.status(400).json({ Error: true, Message: 'Unexpected response during login', response });
     }
-    const match = await bcrypt.compare(password, checkUserIsExisting[0].hash);
-    if (!match) {
-      return res.status(401).json({ Error: false, Message: 'Invalid password.' });
-    }
-
-
-    const jwtExpireTimeIn = 60 * 2;
-    const expire = Math.floor(Date.now() / 1000) + jwtExpireTimeIn;
-    const secret = process.env.JWT_SECRET;
-    if (!secret) {
-      return res.status(500).json({ Error: true, Message: 'Internal Server Error: JWT_SECRET not defined' });
-    }
-    const jwtToken = jwt.sign({ username, expire }, secret);
-
-    return res.status(200).json({ jwtToken, token_type: "Bearer", jwtExpireTimeIn });
-
-
-  } catch (Error) {
-    return res.status(500).json({ Error: true, Message: 'Invalid' });
+  } catch (error) {
+    return res.status(500).json({ Error: true, Message: 'Internal server error during login', error });
   }
 });
+
+
+
+router.post('/setup-mfa', async (req: Request, res: Response) => {
+  const { session, userCode } = req.body;
+
+  if (!session || !userCode) {
+    return res.status(400).json({ Error: true, Message: 'Missing parameters.' });
+  }
+
+  try {
+    const client = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
+
+    const verifyCommand = new VerifySoftwareTokenCommand({
+      Session: session,
+      UserCode: userCode, 
+      FriendlyDeviceName: 'Authenticator App',
+    });
+
+    const verifyResponse = await client.send(verifyCommand);
+    if (verifyResponse.Status === 'SUCCESS') {
+      return res.status(200).json({ Message: 'MFA setup complete. You can now use TOTP for authentication.' });
+    } else {
+      res.status(400).json({ Error: true, Message: 'Failed to verify MFA setup.' });
+    }
+  } catch (error) {
+    res.status(500).json({ Error: true, Message: 'Failed to verify MFA setup.', error });
+  }
+});
+
+
+router.post('/verify-mfa', async (req: Request, res: Response) => {
+  const { session, userCode, username } = req.body;
+
+  if (!session || !userCode || !username) {
+    return res.status(400).json({ Error: true, Message: 'Missing parameters.' });
+  }
+
+  try {
+    const client = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
+
+    const respondToAuthChallengeCommandInput: RespondToAuthChallengeCommandInput = {
+      ChallengeName: 'SOFTWARE_TOKEN_MFA',
+      ClientId: clientId,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: userCode,
+      },
+      Session: session,
+    };
+
+    const mfaResponse = await client.send(new RespondToAuthChallengeCommand(respondToAuthChallengeCommandInput));
+    if (mfaResponse.AuthenticationResult) {
+      const { IdToken, AccessToken, TokenType, ExpiresIn } = mfaResponse.AuthenticationResult;
+      return res.status(200).json({
+        idToken: IdToken,
+        accessToken: AccessToken,
+        tokenType: TokenType,
+        expiresIn: ExpiresIn,
+      });
+    } else {
+      return res.status(400).json({ Error: true, Message: 'Failed to verify MFA setup.', mfaResponse });
+    }
+  } catch (error) {
+    res.status(500).json({ Error: true, Message: 'Failed to verify MFA setup.', error });
+  }
+});
+
+const { OAuth2Client } = require('google-auth-library');
+const googleClient = new OAuth2Client('868548258247-hodf86aqk5e8u3tjkv4ttm3891hbkqdr.apps.googleusercontent.com');
+
+router.post('/google-login', async (req: Request, res: Response) => {
+  const { idToken } = req.body;
+
+  try {
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: googleClient,
+    });
+
+    const payload = ticket.getPayload();
+    const { sub, email, name } = payload;
+    const cognitoClient = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
+
+    const command = new InitiateAuthCommand({
+      AuthFlow: 'CUSTOM_AUTH',
+      ClientId: clientId,
+      AuthParameters: {
+        USERNAME: email,
+        PASSWORD: sub, 
+      },
+    });
+
+    const cognitoResponse = await cognitoClient.send(command);
+    
+    const accessToken = cognitoResponse.AuthenticationResult?.AccessToken;
+
+    if (!accessToken) {
+      return res.status(401).json({ error: 'Failed to authenticate' });
+    }
+
+    res.json({ accessToken });
+
+  } catch (error) {
+    console.error('Error during Google sign-in:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 
 router.post('/logout', (req: Request, res: Response) => {
   const token = req.headers['authorization']?.split(' ')[1];
@@ -136,7 +325,7 @@ router.get('/list', authorization, async (req: Request, res: Response, next: Nex
       return res.status(500).json({ error: true, message: "Username failed to be retrieved" });
     }
 
-    // Check if user exists in the database
+
     const checkUserIsExisting = await db
       .selectFrom('users')
       .selectAll()
