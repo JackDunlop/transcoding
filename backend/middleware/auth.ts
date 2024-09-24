@@ -1,6 +1,15 @@
-const jwt = require('jsonwebtoken');
 import { Request, Response, NextFunction } from 'express';
+import { CognitoJwtVerifier } from 'aws-jwt-verify';
 
+
+
+const clientId = "90agsomhqesnc58a4jerenl72";
+const userPoolId = "ap-southeast-2_oOgmb1Jdz";
+const verifier = CognitoJwtVerifier.create({
+    userPoolId: userPoolId,
+    clientId: clientId,
+    tokenUse: "access",
+});
 
 
 let tokenBlacklist: string[] = [];
@@ -14,7 +23,7 @@ function isTokenBlacklisted(token: string): boolean {
     return tokenBlacklist.includes(token);
 }
 
-module.exports = function (req: Request, res: Response, next: NextFunction) {
+module.exports = async function (req: Request, res: Response, next: NextFunction) {
     if (!("authorization" in req.headers)) {
         res.status(401).json({ error: true, message: "Authorization header ('Bearer token') not found" });
         return;
@@ -29,20 +38,16 @@ module.exports = function (req: Request, res: Response, next: NextFunction) {
     const token = authorization.replace(/^Bearer /, "");
 
     if (isTokenBlacklisted(token)) {
-        res.status(401).json({ error: true, message: "Token has been blacklisted ( You logged out!)" });
+        res.status(401).json({ error: true, message: "Token has been blacklisted (You logged out!)" });
         return;
     }
 
     try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        (req as any).user = decoded;
+        // Verify the token using aws-jwt-verify
+        const payload = await verifier.verify(token);
+        (req as any).user = payload;
     } catch (error) {
-        const e = error as Error;
-        if (e.name === "TokenExpiredError") {
-            res.status(401).json({ error: true, message: "JWT token has expired" });
-        } else {
-            res.status(401).json({ error: true, message: "Invalid JWT token" });
-        }
+        res.status(401).json({ error: true, message: "Invalid or expired JWT token" });
         return;
     }
 

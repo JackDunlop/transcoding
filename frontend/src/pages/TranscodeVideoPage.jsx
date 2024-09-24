@@ -18,35 +18,35 @@ export default function TranscodeVideoPage() {
     const [progress, setProgress] = useState(0);
     const [transcodeID, setTranscodeID] = useState('');
 
-    useEffect(() => {
-        const handleBeforeUnload = () => {
-            killTranscodingProcess();
-        };
+    // useEffect(() => {
+    //     const handleBeforeUnload = () => {
+    //         killTranscodingProcess();
+    //     };
 
-        window.addEventListener('beforeunload', handleBeforeUnload);
+    //     window.addEventListener('beforeunload', handleBeforeUnload);
 
-        return () => {
-            window.removeEventListener('beforeunload', handleBeforeUnload);
-            killTranscodingProcess();
-        };
-    }, []);
+    //     return () => {
+    //         window.removeEventListener('beforeunload', handleBeforeUnload);
+    //         killTranscodingProcess();
+    //     };
+    // }, []);
 
-    const killTranscodingProcess = () => {
-        const storedTranscodeID = transcodeID || localStorage.getItem('transcodeID');
-        if (storedTranscodeID) {
-            fetch(`${API_URL}/transcode/kill/${storedTranscodeID}`, {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
-                },
-                keepalive: true,
-            })
-            .catch((error) => {
-                console.error('Error stopping FFmpeg process:', error);
-            });
-        }
-    };
+    // const killTranscodingProcess = () => {
+    //     const storedTranscodeID = transcodeID || localStorage.getItem('transcodeID');
+    //     if (storedTranscodeID) {
+    //         fetch(`${API_URL}/transcode/kill/${storedTranscodeID}`, {
+    //             method: 'GET',
+    //             headers: {
+    //                 'Content-Type': 'application/json',
+    //                 'Authorization': `Bearer ${localStorage.getItem('token')}`,
+    //             },
+    //             keepalive: true,
+    //         })
+    //         .catch((error) => {
+    //             console.error('Error stopping FFmpeg process:', error);
+    //         });
+    //     }
+    // };
 
     const handleTranscode = () => {
         if (!videoNameUploaded) {

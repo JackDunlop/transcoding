@@ -22,6 +22,7 @@ export interface UserTable {
     email: string
     DOB: string
     fullname: string
+    phone: string
 
 
 }
