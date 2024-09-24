@@ -11,9 +11,9 @@ import {
 
 const secret_name = 'n11431415_database'
 
-let db: Kysely<Database>
+let db: Kysely<Database>;
 
-;(async function initializeDatabase() {
+(async function initializeDatabase() {
   const client = new SecretsManagerClient({
     region: 'ap-southeast-2',
   })
