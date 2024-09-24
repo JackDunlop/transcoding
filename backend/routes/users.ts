@@ -26,9 +26,23 @@ import QRCode from 'qrcode';
 import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
 
 
-
-const clientId = "90agsomhqesnc58a4jerenl72";
-const userPoolId = "ap-southeast-2_oOgmb1Jdz";
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+async function getParameterValue(parameter_name: string): Promise<string | undefined> {
+    const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
+    try {
+      const response = await ssmClient.send(
+        new GetParameterCommand({
+          Name: parameter_name,
+          WithDecryption: true, 
+        })
+      )
+      return response.Parameter?.Value
+    } catch (error) {
+      console.log(`Error fetching parameter ${parameter_name}:`, error)
+      return undefined
+    }
+  }
+  
 
 router.post('/register', async (req: Request, res: Response, next: NextFunction) => {
   const username: string = req.body.username;
@@ -68,7 +82,11 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
 
     const saltRounds = 10;
     const hash = bcrypt.hashSync(password, saltRounds);
-
+    const clientId = await getParameterValue('/n11431415/assignment/clientId');
+    const userPoolId = await getParameterValue('/n11431415/assignment/userPoolId');
+    if (!clientId) {
+      throw new Error('Missing required Cognito configuration');
+    }
     const client = new Cognito.CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
     const command = new Cognito.SignUpCommand({
       ClientId: clientId,
@@ -79,7 +97,12 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
 
     try {
       const cognitoResponse = await client.send(command);
-      
+      const addUserToGroupCommand = new Cognito.AdminAddUserToGroupCommand({
+        GroupName: 'default',
+        UserPoolId: userPoolId,
+        Username: username,
+      });
+      await client.send(addUserToGroupCommand);
     } catch (cognitoError) {
       
       return res.status(500).json({ Error: true, Message: 'Cognito sign-up failed', cognitoError });
@@ -106,17 +129,6 @@ router.post('/register', async (req: Request, res: Response, next: NextFunction)
   }
 });
 
-const accessVerifier = CognitoJwtVerifier.create({
-  userPoolId: userPoolId,
-  tokenUse: 'access',
-  clientId: clientId,
-});
-
-const idVerifier = CognitoJwtVerifier.create({
-  userPoolId: userPoolId,
-  tokenUse: 'id',
-  clientId: clientId,
-});
 
 
 router.post('/login', async (req: Request, res: Response) => {
@@ -128,7 +140,10 @@ router.post('/login', async (req: Request, res: Response) => {
 
   try {
     const client = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
-
+    const clientId = await getParameterValue('/n11431415/assignment/clientId');
+    if (!clientId) {
+      throw new Error('Missing required Cognito configuration');
+    }
 
     const initiateAuthCommandInput: InitiateAuthCommandInput = {
       AuthFlow: AuthFlowType.USER_PASSWORD_AUTH, 
@@ -216,6 +231,10 @@ router.post('/setup-mfa', async (req: Request, res: Response) => {
 
 
 router.post('/verify-mfa', async (req: Request, res: Response) => {
+  const clientId = await getParameterValue('/n11431415/assignment/clientId');
+  if (!clientId) {
+    throw new Error('Missing required Cognito configuration');
+  }
   const { session, userCode, username } = req.body;
 
   if (!session || !userCode || !username) {
@@ -299,7 +318,7 @@ router.post('/delete', authorization, async (req: Request, res: Response, next: 
 
     res.status(200).json({ message: 'Object deleted successfully.' });
   } catch (error) {
-    next(error);
+    return res.status(400).json({ Error: true, Message: error });
   }
 });
 
@@ -308,9 +327,9 @@ router.get('/listtranscodedadmin', authorization, async (req: Request, res: Resp
   try {
     const user = (req as any).user;
     const username = user?.username;
-    const groups = user?.groups || []; // Assuming 'groups' is an array of group names
+    const groups = user?.groups || []; 
 
-    // Check if the user is in the admin group
+
     if (!groups.includes('admin')) {
       return res.status(403).json({ error: true, message: 'Access denied. Admin privileges are required.' });
     }
@@ -348,46 +367,46 @@ router.get('/listtranscodedadmin', authorization, async (req: Request, res: Resp
 });
 
 
-const { OAuth2Client } = require('google-auth-library');
-const googleClient = new OAuth2Client('868548258247-hodf86aqk5e8u3tjkv4ttm3891hbkqdr.apps.googleusercontent.com');
+// const { OAuth2Client } = require('google-auth-library');
+// const googleClient = new OAuth2Client('868548258247-hodf86aqk5e8u3tjkv4ttm3891hbkqdr.apps.googleusercontent.com');
 
-router.post('/google-login', async (req: Request, res: Response) => {
-  const { idToken } = req.body;
+// router.post('/google-login', async (req: Request, res: Response) => {
+//   const { idToken } = req.body;
 
-  try {
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: googleClient,
-    });
+//   try {
+//     const ticket = await googleClient.verifyIdToken({
+//       idToken,
+//       audience: googleClient,
+//     });
 
-    const payload = ticket.getPayload();
-    const { sub, email, name } = payload;
-    const cognitoClient = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
+//     const payload = ticket.getPayload();
+//     const { sub, email, name } = payload;
+//     const cognitoClient = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
 
-    const command = new InitiateAuthCommand({
-      AuthFlow: 'CUSTOM_AUTH',
-      ClientId: clientId,
-      AuthParameters: {
-        USERNAME: email,
-        PASSWORD: sub, 
-      },
-    });
+//     const command = new InitiateAuthCommand({
+//       AuthFlow: 'CUSTOM_AUTH',
+//       ClientId: clientId,
+//       AuthParameters: {
+//         USERNAME: email,
+//         PASSWORD: sub, 
+//       },
+//     });
 
-    const cognitoResponse = await cognitoClient.send(command);
+//     const cognitoResponse = await cognitoClient.send(command);
     
-    const accessToken = cognitoResponse.AuthenticationResult?.AccessToken;
+//     const accessToken = cognitoResponse.AuthenticationResult?.AccessToken;
 
-    if (!accessToken) {
-      return res.status(401).json({ error: 'Failed to authenticate' });
-    }
+//     if (!accessToken) {
+//       return res.status(401).json({ error: 'Failed to authenticate' });
+//     }
 
-    res.json({ accessToken });
+//     res.json({ accessToken });
 
-  } catch (error) {
-    console.error('Error during Google sign-in:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+//   } catch (error) {
+//     console.error('Error during Google sign-in:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
 
 
 router.post('/logout', (req: Request, res: Response) => {

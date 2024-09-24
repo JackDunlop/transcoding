@@ -40,9 +40,6 @@ function checkVideoMetadataBuffer(fileBuffer: Buffer): Promise<FfprobeData> {
 }
 const S3 = require("@aws-sdk/client-s3");
 
-const bucketName = 'n11431415-assignment-two';
-const qutUsername = 'n11431415@qut.edu.au';
-const purpose = 'assignment-two';
 
 const createBucket = async (bucketName: string, qutUsername: string, purpose: string): Promise<void> => {
     const s3Client = new S3Client({ region: 'ap-southeast-2' });
@@ -95,9 +92,33 @@ const createBucket = async (bucketName: string, qutUsername: string, purpose: st
     }
   };
 
+  import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+async function getParameterValue(parameter_name: string): Promise<string | undefined> {
+    const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
+    try {
+      const response = await ssmClient.send(
+        new GetParameterCommand({
+          Name: parameter_name,
+          WithDecryption: true, 
+        })
+      )
+      return response.Parameter?.Value
+    } catch (error) {
+      console.log(`Error fetching parameter ${parameter_name}:`, error)
+      return undefined
+    }
+  }
+  
+
 router.post('/new', authorization, async (req: Request, res: Response, next: NextFunction) => {
 
+  const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+  const qutUsername = await getParameterValue('/n11431415/assignment/qutUsername');
+  const purpose = await getParameterValue('/n11431415/assignment/purpose');
 
+  if (!bucketName || !qutUsername || !purpose) {
+    throw new Error('Missing required Cognito configuration');
+  }
     try {
         await createBucket(bucketName, qutUsername, purpose);
     } 

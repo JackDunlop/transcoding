@@ -5,6 +5,7 @@ import { NewUsersVideosTranscoded } from './databasetypes'
 import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
 import { Readable, PassThrough, Stream } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 
 var express = require('express');
 var router = express.Router();
@@ -17,7 +18,6 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 ffmpeg.setFfprobePath(ffprobePath); 
 const S3Presigner = require("@aws-sdk/s3-request-presigner");
 const S3 = require("@aws-sdk/client-s3");
-const bucketName = 'n11431415-assignment-two';
 const authorization = require("../middleware/auth.ts");
 
 const s3Client = new S3Client({ region: 'ap-southeast-2' });
@@ -36,6 +36,21 @@ const transcodingProgress: Record<string, TranscodingProgress> = {};
 const ffmpegProcesses: Record<string, FFmpegProcessInfo> = {};
 const s3KeysByTranscodeID: Record<number, string> = {};
 
+async function getParameterValue(parameter_name: string): Promise<string | undefined> {
+  const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
+  try {
+    const response = await ssmClient.send(
+      new GetParameterCommand({
+        Name: parameter_name,
+        WithDecryption: true, 
+      })
+    )
+    return response.Parameter?.Value
+  } catch (error) {
+    console.log(`Error fetching parameter ${parameter_name}:`, error)
+    return undefined
+  }
+}
 
 
 const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise<string> => {
@@ -151,6 +166,10 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
     }
 
     const uploadedVideoPath = userVideoPathQuery[0].path;
+    const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+    if (!bucketName) {
+      throw new Error('Missing required Cognito configuration');
+    }
 
     const videoUrl = await retrieveObjectUrl(bucketName, uploadedVideoPath);
    
@@ -323,6 +342,10 @@ router.get('/stream/:videoname', authorization, async (req: Request, res: Respon
         return res.status(404).json({ error: true, message: "No Video has been uploaded matching that name." });
         }
         const uploadedVideoPath = userVideoPathQuery[0].path;
+        const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+        if (!bucketName) {
+          throw new Error('Missing required Cognito configuration');
+        }
         const presignedURL = await streamObject(bucketName, uploadedVideoPath);
         
         const streamUrl : SteamData = {

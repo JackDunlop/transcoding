@@ -7,23 +7,29 @@ var fs = require('fs');
 const S3Presigner = require("@aws-sdk/s3-request-presigner");
 import { S3Client, GetObjectCommand  } from '@aws-sdk/client-s3';
 const S3 = require("@aws-sdk/client-s3");
-const bucketName = 'n11431415-assignment-two';
 const s3Client = new S3Client({ region: 'ap-southeast-2' });
 import { Readable } from 'stream';
-const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise<string> => {
-    const s3Client = new S3Client({ region: 'ap-southeast-2' });
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+
+
+  async function getParameterValue(parameter_name: string): Promise<string | undefined> {
+    const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
     try {
-      const command = new GetObjectCommand({
-        Bucket: bucketName,
-        Key: objectKey,
-      });
-  
-      const url = await S3Presigner.getSignedUrl(s3Client, command, { expiresIn: 3600 }); 
-      return url;
-    } catch (err) {
-      throw err;
+      const response = await ssmClient.send(
+        new GetParameterCommand({
+          Name: parameter_name,
+          WithDecryption: true, 
+        })
+      )
+      return response.Parameter?.Value
+    } catch (error) {
+      console.log(`Error fetching parameter ${parameter_name}:`, error)
+      return undefined
     }
-  };
+  }
+  
+
+
 
   router.get('/:videoname', authorization, async (req: Request, res: Response, next: NextFunction) => {
     const videoname = req.params.videoname;
@@ -55,6 +61,8 @@ const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise
     }
 
     const s3Key = `users/${username}/transcoded/${videoname}`;
+    const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+  
 
     try {
         const command = new GetObjectCommand({
