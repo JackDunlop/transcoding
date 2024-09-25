@@ -24,6 +24,10 @@ import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import QRCode from 'qrcode'; 
 import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
 
 
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
@@ -317,6 +321,53 @@ router.post('/delete', authorization, async (req: Request, res: Response, next: 
 
 
     res.status(200).json({ message: 'Object deleted successfully.' });
+  } catch (error) {
+    return res.status(400).json({ Error: true, Message: error });
+  }
+});
+
+
+router.post('/secertRetriever', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: true, message: 'Secret name is required.' });
+    }
+    const client = new SecretsManagerClient({
+      region: "ap-southeast-2",
+    });
+    
+    let response;
+
+    response = await client.send(
+        new GetSecretValueCommand({
+          SecretId: name,
+          VersionStage: "AWSCURRENT", 
+      })
+    );
+   
+    const secret = response.SecretString;
+
+    res.status(200).json({ message: 'Retrieved successfully.', secert: secret});
+  } catch (error) {
+    return res.status(400).json({ Error: true, Message: error });
+  }
+});
+
+
+
+
+router.post('/parameterRetriever', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: true, message: 'Parameter name is required.' });
+    }
+    const paramter = await getParameterValue(name);
+
+    res.status(200).json({ message: 'Retrieved successfully.', paramter: paramter});
   } catch (error) {
     return res.status(400).json({ Error: true, Message: error });
   }
