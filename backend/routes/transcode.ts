@@ -100,6 +100,34 @@ const getVideoMetadata = async (videoUrl: string): Promise<VideoMetadata> => {
   });
 };
 
+import { promisify } from 'util';  // Ensure util is imported correctly
+import Memcached from 'memcached';
+
+// Define the Memcached client type with promisified methods
+interface MemcachedClient extends Memcached {
+  aGet: (key: string) => Promise<any>;
+  aSet: (key: string, value: any, lifetime: number) => Promise<boolean>; // Corrected type to match the return type
+}
+// Initialize the Memcached address
+const memcachedAddress = 'n11431415-assignment.km2jzi.cfg.apse2.cache.amazonaws.com:11211';
+
+// Declare memcached as a variable of the type MemcachedClient
+let memcached: MemcachedClient;
+
+// Function to connect to Memcached
+function connectToMemcached() {
+  // Initialize memcached as a new instance of Memcached
+  memcached = new Memcached(memcachedAddress) as MemcachedClient;
+
+  // Listen for any failure events
+  memcached.on('failure', (details: any) => {
+    console.log('Memcached server failure:', details);
+  });
+
+  // Promisify the get and set methods for async/await usage
+  memcached.aGet = promisify(memcached.get).bind(memcached);
+  memcached.aSet = promisify(memcached.set).bind(memcached);
+}
 
 
 
@@ -189,7 +217,7 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
 
 const ffmpegStream = new PassThrough();
 transcodingProgress[transcodeID] = { status: 'started', progress: 0 };
-
+connectToMemcached();
 command
   .output(ffmpegStream)
   .on('start', (commandLine) => {
@@ -205,12 +233,22 @@ command
       };
     }
   })
-  .on('progress', (progress) => {
+  .on('progress', async (progress) => {
     transcodingProgress[transcodeID].progress = progress.percent || 0;
+    try {
+      await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
+    } catch (err) {
+      console.error('Error updating cache:', err);
+    }
   })
-  .on('end', () => {
+  .on('end', async () => {
     transcodingProgress[transcodeID].status = 'finished';
     transcodingProgress[transcodeID].progress = 100;
+    try {
+      await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120);
+    } catch (err) {
+      console.error('Error updating cache:', err);
+    }
   })
   .on('error', (err) => {
     if (ffmpegProcesses[transcodeID]) {
@@ -279,22 +317,30 @@ const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
 
 
 
-router.get('/poll/:transcode_id', authorization, async (req: Request, res: Response, next: NextFunction) => {
-    const transcodeID = parseInt(req.params.transcode_id, 10);
+router.get('/poll/:transcode_id', authorization, async (req: Request, res: Response) => {
+  const transcodeID = parseInt(req.params.transcode_id, 10);
 
-    if (isNaN(transcodeID) || !Number.isInteger(transcodeID) || transcodeID <= 0) {
-        return res.status(400).json({ error: true, message: "Invalid transcode ID." });
-    }
-
-    const progressInfo = transcodingProgress[transcodeID];
+  if (isNaN(transcodeID) || !Number.isInteger(transcodeID) || transcodeID <= 0) {
+    return res.status(400).json({ error: true, message: 'Invalid transcode ID.' });
+  }
+  connectToMemcached();
+  try {
+    
+    // Retrieve progress from cache
+    const progressInfo = await memcached.aGet(`transcode_${transcodeID}`);
+    console.log(progressInfo);
     if (!progressInfo) {
-        return res.status(404).json({ error: true, message: 'Transcode ID not found.' });
+      return res.status(404).json({ error: true, message: 'Transcode ID not found.' });
     }
 
     return res.status(200).json({
-        status: progressInfo.status,
-        progress: progressInfo.progress,
+      status: progressInfo.status,
+      progress: progressInfo.progress,
     });
+  } catch (err) {
+    console.error('Error retrieving cache:', err);
+    return res.status(500).json({ error: true, message: 'Failed to retrieve progress.' });
+  }
 });
 
 const streamObject = async (bucketName: string, objectKey: string) => {
