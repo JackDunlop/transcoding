@@ -1,37 +1,12 @@
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: root          
-      MYSQL_DATABASE: cloudcomputing     
-      MYSQL_USER: sample                
-      MYSQL_PASSWORD: password           
-    volumes:
-       - ./backend/database.sql:/docker-entrypoint-initdb.d/database.sql
-    ports:
-      - "3306:3306"
-    expose: 
-      - '3306' 
-
-
-
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: backend
     restart: always
-    environment:
-          DB_HOST: mysql
-          DB_USER: root
-          DB_PASSWORD: root
-          DB_DATABASE: cloudcomputing
     ports:
       - "3001:3001"  
-    depends_on:
-      - mysql
     working_dir: /app  
     command: npm start
   
