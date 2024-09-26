@@ -74,6 +74,7 @@ export default function Stream() {
                         });
                         const data = await response.json();
                         if (!data.error) {
+                            console.log(data.streamUrl.url);
                             setVideoSrc(data.streamUrl.url); 
                         } else {
                             console.error("Error fetching data:", data.message);

@@ -49,7 +49,6 @@ async function getParameterValue(parameter_name: string): Promise<string | undef
     )
     return response.Parameter?.Value
   } catch (error) {
-    console.log(`Error fetching parameter ${parameter_name}:`, error)
     return undefined
   }
 }
@@ -104,27 +103,6 @@ memcached = new Memcached(memcachedAddress) as MemcachedClient;
 
 function connectToMemcached() {
   memcached = new Memcached(memcachedAddress) as MemcachedClient;
-  memcached.on("failure", (details) => {
-     console.log("Memcached server failure: ", details);
-  });
-
-  memcached.on("issue", (details) => {
-     console.log("Memcached server issue: ", details);
-  });
-
-  memcached.on("reconnecting", (details) => {
-     console.log("Memcached server reconnecting: ", details);
-  });
-
-  memcached.on("reconnect", (details) => {
-     console.log("Memcached server reconnected: ", details);
-  });
-
-  memcached.on("remove", (details) => {
-     console.log("Memcached server removed: ", details);
-  });
-
-
   memcached.aGet = promisify(memcached.get);
   memcached.aSet = promisify(memcached.set);
 }
@@ -235,7 +213,6 @@ connectToMemcached();
 command
   .output(ffmpegStream)
   .on('start', (commandLine) => {
-    console.log('FFmpeg command started:', commandLine);
     const ffmpegCommand = command as unknown as {
       ffmpegProc: { pid: number };
     };
@@ -251,8 +228,7 @@ command
   })
   .on('progress', async (progress) => {
     transcodingProgress[transcodeID].progress = progress.percent || 0;
-    console.log(transcodingProgress[transcodeID]);
-    console.log(transcodingProgress[transcodeID].progress);
+
     try {
       await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
     } catch (err) {
@@ -271,10 +247,8 @@ command
       console.error('Error updating cache:', err);
     }
   })
-  .on('error', (err, stdout, stderr) => {
-    console.error('FFmpeg Error:', err.message);
-    console.error('FFmpeg stdout:', stdout);
-    console.error('FFmpeg stderr:', stderr);
+  .on('error', () => {
+
     if (ffmpegProcesses[transcodeID]) {
       ffmpegProcesses[transcodeID].process.kill('SIGKILL');
       delete ffmpegProcesses[transcodeID];
@@ -352,9 +326,11 @@ router.get('/poll/:transcode_id', authorization, async (req: Request, res: Respo
     
     
     const progressInfo = await memcached.aGet(`transcode_${transcodeID}`);
-    console.log(progressInfo);
     if (!progressInfo) {
       return res.status(404).json({ error: true, message: 'Transcode ID not found.' });
+    }
+    if(progressInfo.progress > 99){
+      progressInfo.progress = 100;
     }
 
     return res.status(200).json({
