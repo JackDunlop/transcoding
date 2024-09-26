@@ -59,6 +59,37 @@ export default function TranscodeVideoPage() {
         });
     };
 
+    // const startPolling = (transcodeID) => {
+    //     const interval = setInterval(() => {
+    //         console.log(`${API_URL}/transcode/poll/${transcodeID}`);
+    //         fetch(`${API_URL}/transcode/poll/${transcodeID}`, {
+    //             headers: {
+    //                 'Authorization': `Bearer ${localStorage.getItem('token')}`
+    //             }
+    //         })
+    //         .then(response => response.json())
+    //         .then(data => {
+    //             console.log(data);
+    //             if (data.error) {
+    //                 setStatus(data.error);
+    //                 clearInterval(interval);
+    //             } else {
+    //                 setStatus(data.status);
+    //                 setProgress(data.progress);
+    //                 if (data.status === 'finished' || data.status === 'error') {
+    //                     clearInterval(interval);
+    //                     localStorage.removeItem('transcodeID');  
+    //                 }
+    //             }
+    //         })
+    //         .catch(error => {
+    //             console.error('Error fetching status:', error);
+    //             setStatus('Error fetching status');
+    //             clearInterval(interval);
+    //         });
+    //     }, 2500);
+    // };
+
     const startPolling = (transcodeID) => {
         const interval = setInterval(() => {
             console.log(`${API_URL}/transcode/poll/${transcodeID}`);
@@ -70,8 +101,10 @@ export default function TranscodeVideoPage() {
             .then(response => response.json())
             .then(data => {
                 console.log(data);
-                if (data.error) {
-                    setStatus(data.error);
+                if (data.error && data.message === 'Transcode ID not found.') {
+                    console.warn('Cache miss: Transcode ID not found. Continuing to poll...');
+                } else if (data.error) {
+                    setStatus('Error fetching status');
                     clearInterval(interval);
                 } else {
                     setStatus(data.status);
@@ -84,11 +117,11 @@ export default function TranscodeVideoPage() {
             })
             .catch(error => {
                 console.error('Error fetching status:', error);
-                setStatus('Error fetching status');
-                clearInterval(interval);
             });
         }, 2500);
     };
+    
+
 
     const handleDownload = () => {
         const videoNameExt = videoNameUploaded.split(".")[0];

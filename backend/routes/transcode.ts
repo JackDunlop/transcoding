@@ -6,19 +6,21 @@ import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/clien
 import { Readable, PassThrough, Stream } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
-
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { exec, ExecException } from 'child_process';
 var express = require('express');
 var router = express.Router();
 var path = require('path');
 var fs = require('fs');
+import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
-const ffprobePath = require('@ffprobe-installer/ffprobe').path;
-ffmpeg.setFfmpegPath(ffmpegPath);
-ffmpeg.setFfprobePath(ffprobePath); 
+ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
+ffmpeg.setFfprobePath('/usr/bin/ffprobe');
 const S3Presigner = require("@aws-sdk/s3-request-presigner");
 const S3 = require("@aws-sdk/client-s3");
 const authorization = require("../middleware/auth.ts");
+
+
 
 const s3Client = new S3Client({ region: 'ap-southeast-2' });
 
@@ -53,20 +55,6 @@ async function getParameterValue(parameter_name: string): Promise<string | undef
 }
 
 
-const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise<string> => {
-  try {
-    const command = new GetObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-    });
-
-    const url = await S3Presigner.getSignedUrl(s3Client, command, { expiresIn: 3600 }); 
-    return url;
-  } catch (err) {
-    throw err;
-  }
-};
-
 
 
 
@@ -100,39 +88,68 @@ const getVideoMetadata = async (videoUrl: string): Promise<VideoMetadata> => {
   });
 };
 
-import { promisify } from 'util';  // Ensure util is imported correctly
+import { promisify } from 'util'; 
 import Memcached from 'memcached';
 
-// Define the Memcached client type with promisified methods
+
 interface MemcachedClient extends Memcached {
   aGet: (key: string) => Promise<any>;
-  aSet: (key: string, value: any, lifetime: number) => Promise<boolean>; // Corrected type to match the return type
+  aSet: (key: string, value: any, lifetime: number) => Promise<boolean>; 
 }
-// Initialize the Memcached address
+
 const memcachedAddress = 'n11431415-assignment.km2jzi.cfg.apse2.cache.amazonaws.com:11211';
 
-// Declare memcached as a variable of the type MemcachedClient
 let memcached: MemcachedClient;
+memcached = new Memcached(memcachedAddress) as MemcachedClient;
 
-// Function to connect to Memcached
 function connectToMemcached() {
-  // Initialize memcached as a new instance of Memcached
   memcached = new Memcached(memcachedAddress) as MemcachedClient;
-
-  // Listen for any failure events
-  memcached.on('failure', (details: any) => {
-    console.log('Memcached server failure:', details);
+  memcached.on("failure", (details) => {
+     console.log("Memcached server failure: ", details);
   });
 
-  // Promisify the get and set methods for async/await usage
-  memcached.aGet = promisify(memcached.get).bind(memcached);
-  memcached.aSet = promisify(memcached.set).bind(memcached);
+  memcached.on("issue", (details) => {
+     console.log("Memcached server issue: ", details);
+  });
+
+  memcached.on("reconnecting", (details) => {
+     console.log("Memcached server reconnecting: ", details);
+  });
+
+  memcached.on("reconnect", (details) => {
+     console.log("Memcached server reconnected: ", details);
+  });
+
+  memcached.on("remove", (details) => {
+     console.log("Memcached server removed: ", details);
+  });
+
+
+  memcached.aGet = promisify(memcached.get);
+  memcached.aSet = promisify(memcached.set);
 }
+
+const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise<string> => {
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+    });
+    const url = await getSignedUrl(s3Client, command, { expiresIn: 10000 });
+
+    return url;
+  } catch (err) {
+    console.error('Error retrieving presigned URL:', err);
+    throw err;
+  }
+};
+
+
 
 
 
 router.post('/video/:video_name', authorization,async (req: Request, res: Response, next: NextFunction) => {
-  
+ 
   const user = (req as any).user;
   const username = user?.username;
   const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
@@ -200,7 +217,7 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
     }
 
     const videoUrl = await retrieveObjectUrl(bucketName, uploadedVideoPath);
-   
+
     const resolution = `${width}x${height}`;
 
     const command = ffmpeg(videoUrl)
@@ -209,11 +226,8 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   .videoBitrate(bitrate)
   .videoCodec(codec)
   .fps(framerate)
-  .format('mp4')
-  .outputOptions([
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-  ]);
-
+  .format('mpegts') 
+ 
 
 const ffmpegStream = new PassThrough();
 transcodingProgress[transcodeID] = { status: 'started', progress: 0 };
@@ -221,6 +235,7 @@ connectToMemcached();
 command
   .output(ffmpegStream)
   .on('start', (commandLine) => {
+    console.log('FFmpeg command started:', commandLine);
     const ffmpegCommand = command as unknown as {
       ffmpegProc: { pid: number };
     };
@@ -232,14 +247,20 @@ command
         pid: pid,
       };
     }
+    
   })
   .on('progress', async (progress) => {
     transcodingProgress[transcodeID].progress = progress.percent || 0;
+    console.log(transcodingProgress[transcodeID]);
+    console.log(transcodingProgress[transcodeID].progress);
     try {
       await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
     } catch (err) {
       console.error('Error updating cache:', err);
     }
+  })
+  .on('stderr', (stderrLine) => {
+    console.error('FFmpeg stderr:', stderrLine);
   })
   .on('end', async () => {
     transcodingProgress[transcodeID].status = 'finished';
@@ -250,7 +271,10 @@ command
       console.error('Error updating cache:', err);
     }
   })
-  .on('error', (err) => {
+  .on('error', (err, stdout, stderr) => {
+    console.error('FFmpeg Error:', err.message);
+    console.error('FFmpeg stdout:', stdout);
+    console.error('FFmpeg stderr:', stderr);
     if (ffmpegProcesses[transcodeID]) {
       ffmpegProcesses[transcodeID].process.kill('SIGKILL');
       delete ffmpegProcesses[transcodeID];
@@ -326,7 +350,7 @@ router.get('/poll/:transcode_id', authorization, async (req: Request, res: Respo
   connectToMemcached();
   try {
     
-    // Retrieve progress from cache
+    
     const progressInfo = await memcached.aGet(`transcode_${transcodeID}`);
     console.log(progressInfo);
     if (!progressInfo) {
