@@ -199,7 +199,7 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
     const resolution = `${width}x${height}`;
 
     const command = ffmpeg(videoUrl)
-  .inputOptions(['-loglevel', 'debug'])
+  .inputOptions(['-loglevel quite', 'debug'])
   .size(resolution)
   .videoBitrate(bitrate)
   .videoCodec(codec)
@@ -210,7 +210,10 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   ]);
 
  
-
+  const videoNameExt = videoName.split(".")[0];
+  const videoNameWithoutExt = videoName.split(".")[1];
+  const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
+  const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
 const ffmpegStream = new PassThrough();
 transcodingProgress[transcodeID] = { status: 'started', progress: 0 };
 connectToMemcached();
@@ -234,19 +237,16 @@ command
     transcodingProgress[transcodeID].progress = progress.percent || 0;
 
     try {
-      await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
+      await memcached.aSet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
     } catch (err) {
       console.error('Error updating cache:', err);
     }
-  })
-  .on('stderr', (stderrLine) => {
-    console.error('FFmpeg stderr:', stderrLine);
   })
   .on('end', async () => {
     transcodingProgress[transcodeID].status = 'finished';
     transcodingProgress[transcodeID].progress = 100;
     try {
-      await memcached.aSet(`transcode_${transcodeID}`, transcodingProgress[transcodeID], 120);
+      await memcached.aSet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`, transcodingProgress[transcodeID], 120);
     } catch (err) {
       console.error('Error updating cache:', err);
     }
@@ -261,10 +261,7 @@ command
   })
   .run();
 
-  const videoNameExt = videoName.split(".")[0];
-  const videoNameWithoutExt = videoName.split(".")[1];
-  const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
-  const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+
 
   const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
   
@@ -319,8 +316,9 @@ const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
 
 
 
-router.get('/poll/:transcode_id', authorization, async (req: Request, res: Response) => {
+router.post('/poll/:transcode_id', authorization, async (req: Request, res: Response) => {
   const transcodeID = parseInt(req.params.transcode_id, 10);
+  const { videoNameWithTranscodeWithExt} = req.body;
 
   if (isNaN(transcodeID) || !Number.isInteger(transcodeID) || transcodeID <= 0) {
     return res.status(400).json({ error: true, message: 'Invalid transcode ID.' });
@@ -328,8 +326,8 @@ router.get('/poll/:transcode_id', authorization, async (req: Request, res: Respo
   connectToMemcached();
   try {
     
-    
-    const progressInfo = await memcached.aGet(`transcode_${transcodeID}`);
+    console.log(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`);
+    const progressInfo = await memcached.aGet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`);
     if (!progressInfo) {
       return res.status(404).json({ error: true, message: 'Transcode ID not found.' });
     }

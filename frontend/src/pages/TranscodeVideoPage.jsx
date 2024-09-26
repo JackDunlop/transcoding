@@ -59,45 +59,24 @@ export default function TranscodeVideoPage() {
         });
     };
 
-    // const startPolling = (transcodeID) => {
-    //     const interval = setInterval(() => {
-    //         console.log(`${API_URL}/transcode/poll/${transcodeID}`);
-    //         fetch(`${API_URL}/transcode/poll/${transcodeID}`, {
-    //             headers: {
-    //                 'Authorization': `Bearer ${localStorage.getItem('token')}`
-    //             }
-    //         })
-    //         .then(response => response.json())
-    //         .then(data => {
-    //             console.log(data);
-    //             if (data.error) {
-    //                 setStatus(data.error);
-    //                 clearInterval(interval);
-    //             } else {
-    //                 setStatus(data.status);
-    //                 setProgress(data.progress);
-    //                 if (data.status === 'finished' || data.status === 'error') {
-    //                     clearInterval(interval);
-    //                     localStorage.removeItem('transcodeID');  
-    //                 }
-    //             }
-    //         })
-    //         .catch(error => {
-    //             console.error('Error fetching status:', error);
-    //             setStatus('Error fetching status');
-    //             clearInterval(interval);
-    //         });
-    //     }, 2500);
-    // };
+    const videoNameExt = videoNameUploaded.split(".")[0];
+    const videoNameWithoutExt = videoNameUploaded.split(".")[1];
+    const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
+    const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
 
     const startPolling = (transcodeID) => {
         const interval = setInterval(() => {
             console.log(`${API_URL}/transcode/poll/${transcodeID}`);
             fetch(`${API_URL}/transcode/poll/${transcodeID}`, {
-                headers: {
-                    'Authorization': `Bearer ${localStorage.getItem('token')}`
-                }
-            })
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}`
+                    },
+                    body: JSON.stringify({
+                        videoNameWithTranscodeWithExt,
+                    }),
+                })
             .then(response => response.json())
             .then(data => {
                 console.log(data);
@@ -124,10 +103,7 @@ export default function TranscodeVideoPage() {
 
 
     const handleDownload = () => {
-        const videoNameExt = videoNameUploaded.split(".")[0];
-        const videoNameWithoutExt = videoNameUploaded.split(".")[1];
-        const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
-        const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+       
         const username = localStorage.getItem("username");
         const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
         const url = `${API_URL}/download/${videoNameWithTranscodeWithExt}`;
