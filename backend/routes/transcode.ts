@@ -204,7 +204,11 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   .videoBitrate(bitrate)
   .videoCodec(codec)
   .fps(framerate)
-  .format('mpegts') 
+  .format('mp4')
+  .outputOptions([
+    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+  ]);
+
  
 
 const ffmpegStream = new PassThrough();
