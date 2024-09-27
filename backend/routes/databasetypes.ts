@@ -56,7 +56,7 @@ export interface UserVideosTranscodedTables {
     codec: string
     width: number
     height: number
-    userTranscodeID: string
+    userTranscodeID: number
 
 }
 

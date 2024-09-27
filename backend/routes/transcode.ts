@@ -14,6 +14,9 @@ var path = require('path');
 var fs = require('fs');
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
+import randomInt from 'random-int';
+import { promisify } from 'util'; 
+import Memcached from 'memcached';
 
 ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 ffmpeg.setFfprobePath('/usr/bin/ffprobe');
@@ -76,8 +79,6 @@ const getVideoMetadata = async (videoUrl: string): Promise<VideoMetadata> => {
   });
 };
 
-import { promisify } from 'util'; 
-import Memcached from 'memcached';
 
 
 interface MemcachedClient extends Memcached {
@@ -135,8 +136,6 @@ const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise
 
 
 
-
-
 router.post('/video/:video_name', authorization,async (req: Request, res: Response, next: NextFunction) => {
  
   const user = (req as any).user;
@@ -157,7 +156,7 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   const userForeignKey = userForeignKeyFind[0].id;
   
   
-  const transcodeID: string = uuidv4();
+  const transcodeID: number = randomInt(1, 9_999_999_999);
  
   res.status(200).json({ message: 'Transcoding started', transcodeID });
 
@@ -247,6 +246,8 @@ command
     
   }
   })
+
+ 
   .run();
 
 
@@ -305,9 +306,7 @@ router.post('/poll/:transcode_id', authorization, async (req: Request, res: Resp
   const transcodeID = parseInt(req.params.transcode_id, 10);
   const { videoNameWithTranscodeWithExt} = req.body;
 
-  if (isNaN(transcodeID) || !Number.isInteger(transcodeID) || transcodeID <= 0) {
-    return res.status(400).json({ error: true, message: 'Invalid transcode ID.' });
-  }
+
   connectToMemcached();
   try {
     
