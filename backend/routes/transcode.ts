@@ -24,19 +24,7 @@ const authorization = require("../middleware/auth.ts");
 
 const s3Client = new S3Client({ region: 'ap-southeast-2' });
 
-interface TranscodingProgress {
-    status: string;
-    progress: number;
-}
 
-interface FFmpegProcessInfo {
-    process: any; 
-    pid: number;
-  }
-
-const transcodingProgress: Record<string, TranscodingProgress> = {};
-const ffmpegProcesses: Record<string, FFmpegProcessInfo> = {};
-const s3KeysByTranscodeID: Record<number, string> = {};
 
 async function getParameterValue(parameter_name: string): Promise<string | undefined> {
   const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
@@ -96,16 +84,38 @@ interface MemcachedClient extends Memcached {
   aSet: (key: string, value: any, lifetime: number) => Promise<boolean>; 
 }
 
-const memcachedAddress = 'n11431415-assignment.km2jzi.cfg.apse2.cache.amazonaws.com:11211';
+const memcachedAddress = 'n11431415.km2jzi.cfg.apse2.cache.amazonaws.com:11211';
 
 let memcached: MemcachedClient;
 memcached = new Memcached(memcachedAddress) as MemcachedClient;
 
-function connectToMemcached() {
+async function connectToMemcached(): Promise<void> {
   memcached = new Memcached(memcachedAddress) as MemcachedClient;
+  memcached.on("failure", (details) => {
+     console.log("Memcached server failure: ", details);
+  });
+
+  memcached.on("issue", (details) => {
+     console.log("Memcached server issue: ", details);
+  });
+
+  memcached.on("reconnecting", (details) => {
+     console.log("Memcached server reconnecting: ", details);
+  });
+
+  memcached.on("reconnect", (details) => {
+     console.log("Memcached server reconnected: ", details);
+  });
+
+  memcached.on("remove", (details) => {
+     console.log("Memcached server removed: ", details);
+  });
+
+
   memcached.aGet = promisify(memcached.get);
   memcached.aSet = promisify(memcached.set);
 }
+
 
 const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise<string> => {
   try {
@@ -193,13 +203,13 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
     if (!bucketName) {
       throw new Error('Missing required Cognito configuration');
     }
-
+    await connectToMemcached();
     const videoUrl = await retrieveObjectUrl(bucketName, uploadedVideoPath);
 
     const resolution = `${width}x${height}`;
 
     const command = ffmpeg(videoUrl)
-  .inputOptions(['-loglevel quite', 'debug'])
+  .inputOptions(['-loglevel', 'debug'])
   .size(resolution)
   .videoBitrate(bitrate)
   .videoCodec(codec)
@@ -215,49 +225,44 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
   const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
 const ffmpegStream = new PassThrough();
-transcodingProgress[transcodeID] = { status: 'started', progress: 0 };
-connectToMemcached();
+let ffmpegProc : any;
 command
   .output(ffmpegStream)
   .on('start', (commandLine) => {
+    console.log(commandLine);
     const ffmpegCommand = command as unknown as {
       ffmpegProc: { pid: number };
     };
 
     if (ffmpegCommand.ffmpegProc) {
       const pid = ffmpegCommand.ffmpegProc.pid;
-      ffmpegProcesses[transcodeID] = {
-        process: ffmpegCommand.ffmpegProc,
-        pid: pid,
-      };
+      ffmpegProc = command as unknown as { ffmpegProc: { pid: number } };
     }
     
   })
   .on('progress', async (progress) => {
-    transcodingProgress[transcodeID].progress = progress.percent || 0;
+    const percent = typeof progress.percent === 'number' ? progress.percent : 0; // Default to 0 if undefined or not a number
 
+  
     try {
-      await memcached.aSet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`, transcodingProgress[transcodeID], 120); 
+      await memcached.aSet(`transcode_${transcodeID}`, percent as number, 120); 
     } catch (err) {
       console.error('Error updating cache:', err);
     }
   })
   .on('end', async () => {
-    transcodingProgress[transcodeID].status = 'finished';
-    transcodingProgress[transcodeID].progress = 100;
     try {
-      await memcached.aSet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`, transcodingProgress[transcodeID], 120);
+      await memcached.aSet(`transcode_${transcodeID}`, 100, 120);
     } catch (err) {
       console.error('Error updating cache:', err);
     }
   })
   .on('error', () => {
 
-    if (ffmpegProcesses[transcodeID]) {
-      ffmpegProcesses[transcodeID].process.kill('SIGKILL');
-      delete ffmpegProcesses[transcodeID];
+    if (ffmpegProc) {
+      ffmpegProc.ffmpegProc.kill('SIGKILL');
+    
   }
-  delete transcodingProgress[transcodeID];
   })
   .run();
 
@@ -283,7 +288,7 @@ upload.on('httpUploadProgress', (progress) => {
 
 
 await upload.done();
-s3KeysByTranscodeID[transcodeID] = s3Key;
+
 
 const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
 
@@ -309,9 +314,6 @@ const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
   } catch (error) {
   }
 })();
-
-
- 
 });
 
 
@@ -326,18 +328,21 @@ router.post('/poll/:transcode_id', authorization, async (req: Request, res: Resp
   connectToMemcached();
   try {
     
-    console.log(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`);
-    const progressInfo = await memcached.aGet(`${videoNameWithTranscodeWithExt}_transcode_${transcodeID}`);
-    if (!progressInfo) {
+
+    let progress = await memcached.aGet(`transcode_${transcodeID}`);
+    if (!progress) {
       return res.status(404).json({ error: true, message: 'Transcode ID not found.' });
     }
-    if(progressInfo.progress > 99){
-      progressInfo.progress = 100;
-    }
+
+    let status = "started";
+    if(progress > 99){
+      progress = 100;
+      status = 'finished';
+    }   
 
     return res.status(200).json({
-      status: progressInfo.status,
-      progress: progressInfo.progress,
+      status: status,
+      progress: progress,
     });
   } catch (err) {
     console.error('Error retrieving cache:', err);
@@ -421,37 +426,5 @@ const deleteObject = async (bucketName: string, objectKey: string) => {
     throw err;
   }
 };
-
-router.get('/kill/:transcode_id', authorization, async (req: Request, res: Response) => {
-  const transcodeID = parseInt(req.params.transcode_id, 10);
-
-  if (isNaN(transcodeID) || !Number.isInteger(transcodeID) || transcodeID <= 0) {
-    return res.status(400).json({ error: true, message: 'Invalid transcode ID.' });
-  }
-
-  const processInfo = ffmpegProcesses[transcodeID];
-  if (!processInfo) {
-    return res.status(404).json({ error: true, message: 'FFmpeg process not found.' });
-  }
-
- 
-
-  try {
-   // await deleteObject(bucketName, s3Key);
-
- 
-    processInfo.process.kill('SIGKILL');
-    delete ffmpegProcesses[transcodeID];
-    delete transcodingProgress[transcodeID];
-    delete s3KeysByTranscodeID[transcodeID];
-
-    res.status(200).json({ message: 'FFmpeg process terminated successfully.' });
-  } catch (error) {
-    res.status(500).json({ error: true, message: 'Failed to terminate FFmpeg process or delete S3 object.' });
-  }
-});
-
-
-
 
 module.exports = router;
