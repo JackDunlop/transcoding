@@ -13,6 +13,7 @@ var router = express.Router();
 var path = require('path');
 var fs = require('fs');
 import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
+import { v4 as uuidv4 } from 'uuid';
 
 ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 ffmpeg.setFfprobePath('/usr/bin/ffprobe');
@@ -155,26 +156,8 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   }
   const userForeignKey = userForeignKeyFind[0].id;
   
-  const userTranscodedIDFind = await db.selectFrom('users').select('id').where('username', '=', username).execute();
-  if (userTranscodedIDFind.length < 0) {
-      return res.status(404).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
-  }
-  const userTranscodedID = userTranscodedIDFind[0].id;
-
-
-  let transcodeID = 0;
-
-
-
-  const usersTranscodedVideos = await db.selectFrom("uservideotranscoded").selectAll().where('userid', '=', userTranscodedID).execute();
-  if (usersTranscodedVideos.length < 0) {
-      transcodeID = 0;
-  }
-  else {
-      const transodeIDSearchLength = usersTranscodedVideos.length
-      transcodeID = transodeIDSearchLength + 1;
-  }
-
+  
+  const transcodeID: string = uuidv4();
  
   res.status(200).json({ message: 'Transcoding started', transcodeID });
 
@@ -241,7 +224,7 @@ command
     
   })
   .on('progress', async (progress) => {
-    const percent = typeof progress.percent === 'number' ? progress.percent : 0; // Default to 0 if undefined or not a number
+    const percent = typeof progress.percent === 'number' ? progress.percent : 0; 
 
   
     try {
