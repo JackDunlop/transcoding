@@ -31,6 +31,7 @@ import {
 
 
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+import { use } from 'passport';
 async function getParameterValue(parameter_name: string): Promise<string | undefined> {
     const ssmClient = new SSMClient({ region: 'ap-southeast-2' })
     try {
@@ -167,7 +168,7 @@ router.post('/login', async (req: Request, res: Response) => {
       const associateResponse = await client.send(associateCommand);
       const secretCode = associateResponse.SecretCode;
 
-      const otpauthUrl = `otpauth://totp/YourAppName:${username}?secret=${secretCode}&issuer=AwesomeTranscoding`;
+      const otpauthUrl = `otpauth://totp/AwesomeTranscoding:${username}?secret=${secretCode}&issuer=AwesomeTranscoding`;
 
 
       QRCode.toDataURL(otpauthUrl, (err, url) => {
@@ -357,6 +358,87 @@ router.post('/secertRetriever', authorization, async (req: Request, res: Respons
 
 
 
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, PutCommand,ScanCommand } from "@aws-sdk/lib-dynamodb";
+
+
+const client = new DynamoDBClient({ region: 'ap-southeast-2' }); 
+const docClient = DynamoDBDocumentClient.from(client);
+
+router.post('/feedback', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const user = (req as any).user;
+    const username = user?.username;
+    const { feedback } = req.body;
+    if (!feedback) {
+      return res.status(400).json({ error: true, message: 'Must include feedback.' });
+    }
+
+    const timestamp = new Date().toISOString(); 
+   const qutUsername  = await getParameterValue('/n11431415/assignment/qutUsername');
+  const tableName  = await getParameterValue('/n11431415/assignment/tableName');
+    
+   const command = new PutCommand({
+      TableName: tableName,
+      Item: {
+        "qut-username": qutUsername,
+        "timestamp": timestamp, 
+        user: {
+          submittedby: username,
+          feedback: feedback
+        }
+      }
+    });
+
+    try {
+      const response = await docClient.send(command);
+      console.log("Put command response:", response);
+      res.status(200).json({ message: 'Feedback submitted.' });
+    } catch (err) {
+      console.error('Error submitting feedback:', err);
+      res.status(500).json({ error: true, message: 'Failed to submit feedback.' });
+    }
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    res.status(400).json({ error: true, message: 'An unexpected error occurred.' });
+  }
+});
+router.get('/getallfeedback', authorization, async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const qutUsername  = await getParameterValue('/n11431415/assignment/qutUsername');
+    const tableName  = await getParameterValue('/n11431415/assignment/tableName');
+    const command = new ScanCommand({
+      TableName: tableName,
+      FilterExpression: "#username = :username",
+      ExpressionAttributeNames: {
+        "#username": "qut-username"
+      },
+      ExpressionAttributeValues: {
+        ":username": qutUsername
+      }
+    });
+    try {
+      const response = await docClient.send(command);
+      if (!response.Items || response.Items.length === 0) {
+        return res.status(404).json({ error: true, message: 'No feedback found.' });
+      }
+      console.log(response);
+      const feedback = response.Items.map(item => ({
+        submittedby: item.user.submittedby,
+        feedback: item.user.feedback,
+        timestamp: item.timestamp 
+      }));
+    
+      res.status(200).json({ feedback });
+    } catch (err) {
+      console.error('Error retrieving feedback:', err);
+      res.status(500).json({ error: true, message: 'Failed to retrieve feedback.' });
+    }
+  } catch (error) {
+    console.error('Unexpected error:', error);
+    return res.status(400).json({ error: true, message: 'An unexpected error occurred.' });
+  }
+});
 
 router.post('/parameterRetriever', authorization, async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -379,6 +461,7 @@ router.get('/listtranscodedadmin', authorization, async (req: Request, res: Resp
     const user = (req as any).user;
     const username = user?.username;
     const groups = user?.groups || []; 
+    console.log(groups);
 
 
     if (!groups.includes('admin')) {
@@ -418,46 +501,6 @@ router.get('/listtranscodedadmin', authorization, async (req: Request, res: Resp
 });
 
 
-// const { OAuth2Client } = require('google-auth-library');
-// const googleClient = new OAuth2Client('868548258247-hodf86aqk5e8u3tjkv4ttm3891hbkqdr.apps.googleusercontent.com');
-
-// router.post('/google-login', async (req: Request, res: Response) => {
-//   const { idToken } = req.body;
-
-//   try {
-//     const ticket = await googleClient.verifyIdToken({
-//       idToken,
-//       audience: googleClient,
-//     });
-
-//     const payload = ticket.getPayload();
-//     const { sub, email, name } = payload;
-//     const cognitoClient = new CognitoIdentityProviderClient({ region: 'ap-southeast-2' });
-
-//     const command = new InitiateAuthCommand({
-//       AuthFlow: 'CUSTOM_AUTH',
-//       ClientId: clientId,
-//       AuthParameters: {
-//         USERNAME: email,
-//         PASSWORD: sub, 
-//       },
-//     });
-
-//     const cognitoResponse = await cognitoClient.send(command);
-    
-//     const accessToken = cognitoResponse.AuthenticationResult?.AccessToken;
-
-//     if (!accessToken) {
-//       return res.status(401).json({ error: 'Failed to authenticate' });
-//     }
-
-//     res.json({ accessToken });
-
-//   } catch (error) {
-//     console.error('Error during Google sign-in:', error);
-//     res.status(500).json({ error: 'Internal server error' });
-//   }
-// });
 
 
 router.post('/logout', (req: Request, res: Response) => {

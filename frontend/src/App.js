@@ -17,6 +17,7 @@ import UploadVideo from './pages/UploadVideo';
 import TranscodeVideoPage from './pages/TranscodeVideoPage';
 import PlayTranscode from './pages/PlayTranscode';
 import Stream from './pages/Stream';
+import FeedBack from './pages/FeedBack';
 
 
 
@@ -42,6 +43,7 @@ function App() {
           <Route path="/listofuploadedvideos" element={<ListOfUploadedVideos />} />
           <Route path="/uploadvideo" element={<UploadVideo />} />
           <Route path="/playtranscode" element={<PlayTranscode />} />
+          <Route path="/feedback" element={<FeedBack />} />
           <Route path="/transcodevideo/:videoNameTypeUploaded" element={<TranscodeVideoPage />} />
           <Route path="/stream/:filename" element={<Stream />} />
           <Route path="/listoftranscodedvideosadmin" element={<ListOfTranscodedVideosAdmin />} />

@@ -248,13 +248,16 @@ command
     try {
       await memcached.aSet(`transcode_${transcodeID}`, percent as number, 120); 
     } catch (err) {
+      await connectToMemcached();
       console.error('Error updating cache:', err);
+      
     }
   })
   .on('end', async () => {
     try {
       await memcached.aSet(`transcode_${transcodeID}`, 100, 120);
     } catch (err) {
+      await connectToMemcached();
       console.error('Error updating cache:', err);
     }
   })
@@ -288,6 +291,7 @@ upload.on('httpUploadProgress', (progress) => {
 });
 
 
+
 await upload.done();
 
 
@@ -311,7 +315,7 @@ const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
       height: metadataFromTranscode.height,
       userTranscodeID: transcodeID,
     };
-    db.insertInto('uservideotranscoded').values(metadata).executeTakeFirst();
+    await db.insertInto('uservideotranscoded').values(metadata).executeTakeFirst();
   } catch (error) {
   }
 })();

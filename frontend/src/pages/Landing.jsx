@@ -10,6 +10,7 @@ const Landing = () => (
       <Link to="/register">Register</Link>
       <Link to="/login">Login</Link>
       <Link to="/transcoding">Video Transcoding!</Link>
+      <Link to="/feedback">FeedBack!</Link>
     </div>
   </section>
 );
