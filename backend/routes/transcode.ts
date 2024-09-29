@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction, response } from 'express';
 import { db } from './database';
 import ffmpeg, { FfprobeData } from 'fluent-ffmpeg';
-import { NewUsersVideosTranscoded } from './databasetypes'
+import { NewUsersVideosTranscoded, NewUserTasks } from './databasetypes'
 import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
 import { Readable, PassThrough, Stream } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -225,6 +225,7 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   const videoNameWithoutExt = videoName.split(".")[1];
   const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
   const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+  const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
 const ffmpegStream = new PassThrough();
 let ffmpegProc : any;
 command
@@ -242,7 +243,73 @@ command
     
   })
   .on('progress', async (progress) => {
-    const percent = typeof progress.percent === 'number' ? progress.percent : 0; // Default to 0 if undefined or not a number
+    const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
+
+
+    if(percent === 20 || percent === 40 || percent === 60 || percent === 80){
+      const videoTaskWithProgress = videoNameWithTranscode + "_" + percent + "." +videoNameWithoutExt;
+      const s3ProgressKey = `users/${username}/task/${videoNameWithTranscodeWithExt}`;
+      //  delete previous progress milestone from s3 and database
+      // upload current transcoded video into s3 with metadata into rds database tabel
+
+      
+      const uploadTask = new Upload({
+        client: s3Client,
+        params: {
+          Bucket: bucketName,
+          Key: s3ProgressKey,
+          Body: ffmpegStream,
+          ContentType: 'video/mp4',
+        },
+      });
+
+      upload.on('httpUploadProgress', (progress) => {
+      });
+
+
+
+      await upload.done();
+
+      const taskURL = await retrieveObjectUrl(bucketName, s3ProgressKey);
+      (async () => {
+        try {
+          const metadataForTasks = await getVideoMetadata(taskURL);
+          const metadataTasks: NewUserTasks = {
+            userid: userForeignKey,
+            path: s3ProgressKey,
+            mimeType: format,
+            size: metadataForTasks.size,
+            duration: metadataForTasks.duration,
+            bit_rate: bitrate,
+            codec: metadataForTasks.codec,
+            width: metadataForTasks.width,
+            height: metadataForTasks.height,
+            userTranscodeID: transcodeID,
+            progress: percent
+          };
+          await db.insertInto('usertasks').values(metadataTasks).executeTakeFirst();
+        } catch (error) {
+        }
+      })();
+    
+
+
+      /*export interface UserVideoTasks {
+    id: Generated<number>
+    userid: string
+    path: string
+    mimeType: string
+    size: number
+    duration: number
+    bit_rate: number
+    codec: string
+    width: number
+    height: number
+    userTranscodeID: number
+    progress: number
+}
+ */
+    }    
 
   
     try {
@@ -252,6 +319,9 @@ command
       console.error('Error updating cache:', err);
       
     }
+
+   
+
   })
   .on('end', async () => {
     try {
@@ -272,7 +342,7 @@ command
 
 
 
-  const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
+  
   
   
 

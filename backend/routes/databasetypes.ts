@@ -13,6 +13,7 @@ export interface Database {
     users: UserTable
     uservideos: UserVideosTables
     uservideotranscoded: UserVideosTranscodedTables
+    usertasks: UserVideoTasks
 }
 
 export interface UserTable {
@@ -60,6 +61,25 @@ export interface UserVideosTranscodedTables {
 
 }
 
+export interface UserVideoTasks {
+    id: Generated<number>
+    userid: number
+    path: string
+    mimeType: string
+    size: number
+    duration: number
+    bit_rate: number
+    codec: string
+    width: number
+    height: number
+    userTranscodeID: number
+    progress: number
+}
+
+
+export type UserTasks = Selectable<UserVideoTasks>
+export type NewUserTasks = Insertable<UserVideoTasks>
+export type UserTaksUpdate = Updateable<UserVideoTasks>
 
 export type UsersVideos = Selectable<UserVideosTables>
 export type NewUsersVideos = Insertable<UserVideosTables>
@@ -72,3 +92,5 @@ export type UserUpdate = Updateable<UserTable>
 
 export type UsersVideosTranscoded = Selectable<UserVideosTranscodedTables>
 export type NewUsersVideosTranscoded = Insertable<UserVideosTranscodedTables>
+
+
