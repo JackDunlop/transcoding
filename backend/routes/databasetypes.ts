@@ -66,12 +66,11 @@ export interface UserVideoTasks {
     userid: number
     path: string
     mimeType: string
-    size: number
-    duration: number
     bit_rate: number
     codec: string
     width: number
     height: number
+    fps: number
     userTranscodeID: number
     progress: number
 }

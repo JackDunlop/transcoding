@@ -133,7 +133,97 @@ const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise
   }
 };
 
+router.post('/resume/:key', authorization,async (req: Request, res: Response, next: NextFunction) => {
+  
+  const key = req.params.key;
+  const user = (req as any).user;
+  const username = user?.username;
+  
+ const s3Key = key as string;
 
+  const taskMetaData = await db.selectFrom("usertasks").selectAll().where('path', '=', s3Key).execute();
+  if (taskMetaData.length < 0) {
+    return res.status(404).json({ Error: true, Message: 'Cannot find task.' });
+  }
+  const videoTaskMetaData = taskMetaData[0];
+
+
+
+  await connectToMemcached();
+
+  const resolution = `${videoTaskMetaData.width}x${videoTaskMetaData.height}`;
+  const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+  if(!bucketName){
+    return res.status(404).json({ Error: true, Message: 'Cannot find bucketName.' });
+  }
+  const videoUrl = await retrieveObjectUrl(bucketName, s3Key);
+
+  const command = ffmpeg(videoUrl)
+.inputOptions(['-loglevel', 'debug'])
+.size(resolution)
+.videoBitrate(videoTaskMetaData.bitrate)
+.videoCodec(videoTaskMetaData.codec)
+.fps(videoTaskMetaData.framerate)
+.format('mp4')
+.outputOptions([
+  '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+]);
+
+const videoName : string = videoTaskMetaData.path.split('/').pop()?.split('.')[0];
+const videoNameExt = videoName.split(".")[0];
+const videoNameWithoutExt = videoName.split(".")[1];
+const videoNameWithTranscode = videoNameExt + "_" + videoTaskMetaData.transcodeID;
+const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+const videoTask = `${videoNameWithTranscode}.${videoNameWithoutExt}`;
+const s3ProgressKey = `users/${username}/task/${videoTask}`;
+const ffmpegStream = new PassThrough();
+let ffmpegProc : any;
+command
+.output(ffmpegStream)
+.on('start', (commandLine) => {
+  console.log(commandLine);
+  const ffmpegCommand = command as unknown as {
+    ffmpegProc: { pid: number };
+  };
+
+  if (ffmpegCommand.ffmpegProc) {
+    const pid = ffmpegCommand.ffmpegProc.pid;
+    ffmpegProc = command as unknown as { ffmpegProc: { pid: number } };
+  }
+  
+})
+.on('progress', async (progress) => {
+  const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
+  
+  try {
+    await memcached.aSet(`transcode_${videoTaskMetaData.transcodeID}`, percent, 120);
+  } catch (err) {
+    await connectToMemcached();
+    console.error('Error updating cache:', err);
+  }
+
+  
+})
+.on('end', async () => {
+  await deleteTask(s3ProgressKey);
+  try {
+    await memcached.aSet(`transcode_${videoTaskMetaData.transcodeID}`, 100, 120);
+  } catch (err) {
+    await connectToMemcached();
+    console.error('Error updating cache:', err);
+  }
+})
+.on('error', () => {
+
+  if (ffmpegProc) {
+    ffmpegProc.ffmpegProc.kill('SIGKILL');
+  
+}
+})
+.run();
+
+
+});
 
 
 
@@ -226,6 +316,8 @@ router.post('/video/:video_name', authorization,async (req: Request, res: Respon
   const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
   const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
   const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
+  const videoTask = `${videoNameWithTranscode}.${videoNameWithoutExt}`;
+  const s3ProgressKey = `users/${username}/task/${videoTask}`;
 const ffmpegStream = new PassThrough();
 let ffmpegProc : any;
 command
@@ -244,15 +336,16 @@ command
   })
   .on('progress', async (progress) => {
     const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
-
-
-    if(percent === 20 || percent === 40 || percent === 60 || percent === 80){
-      const videoTaskWithProgress = videoNameWithTranscode + "_" + percent + "." +videoNameWithoutExt;
-      const s3ProgressKey = `users/${username}/task/${videoNameWithTranscodeWithExt}`;
-      //  delete previous progress milestone from s3 and database
-      // upload current transcoded video into s3 with metadata into rds database tabel
-
-      
+    
+    try {
+      await memcached.aSet(`transcode_${transcodeID}`, percent, 120);
+    } catch (err) {
+      await connectToMemcached();
+      console.error('Error updating cache:', err);
+    }
+  
+    if (percent >= 49 && percent <= 51) {
+      const roundedPercent = Math.round(percent); 
       const uploadTask = new Upload({
         client: s3Client,
         params: {
@@ -262,68 +355,47 @@ command
           ContentType: 'video/mp4',
         },
       });
-
-      upload.on('httpUploadProgress', (progress) => {
-      });
-
-
-
-      await upload.done();
-
-      const taskURL = await retrieveObjectUrl(bucketName, s3ProgressKey);
-      (async () => {
-        try {
-          const metadataForTasks = await getVideoMetadata(taskURL);
-          const metadataTasks: NewUserTasks = {
-            userid: userForeignKey,
-            path: s3ProgressKey,
-            mimeType: format,
-            size: metadataForTasks.size,
-            duration: metadataForTasks.duration,
-            bit_rate: bitrate,
-            codec: metadataForTasks.codec,
-            width: metadataForTasks.width,
-            height: metadataForTasks.height,
-            userTranscodeID: transcodeID,
-            progress: percent
-          };
-          await db.insertInto('usertasks').values(metadataTasks).executeTakeFirst();
-        } catch (error) {
-        }
-      })();
-    
-
-
-      /*export interface UserVideoTasks {
-    id: Generated<number>
-    userid: string
-    path: string
-    mimeType: string
-    size: number
-    duration: number
-    bit_rate: number
-    codec: string
-    width: number
-    height: number
-    userTranscodeID: number
-    progress: number
-}
- */
-    }    
-
   
-    try {
-      await memcached.aSet(`transcode_${transcodeID}`, percent as number, 120); 
-    } catch (err) {
-      await connectToMemcached();
-      console.error('Error updating cache:', err);
+      uploadTask.on('httpUploadProgress', (progress) => {
       
+      });
+  
+      try {
+        await uploadTask.done(); 
+      } catch (error) {
+        console.error('Error during upload:', error);
+      }
+  
+      try {
+        const metadataTasks = {
+          userid: userForeignKey,
+          path: s3ProgressKey,
+          mimeType: format,
+          bit_rate: bitrate,
+          codec: codec,
+          width: width,
+          height: height,
+          fps: framerate,
+          userTranscodeID: transcodeID,
+          progress: percent,
+        };
+  
+        try {
+          await db.insertInto('usertasks').values(metadataTasks).executeTakeFirst();
+          console.log("Metadata added to the database");
+        } catch (error) {
+          console.error('Error during uploading metadata:', error);
+        }
+        
+       
+      } catch (error) {
+        console.error('Error saving metadata:', error);
+      }
     }
-
-   
-
   })
+  
   .on('end', async () => {
+    await deleteTask(s3ProgressKey);
     try {
       await memcached.aSet(`transcode_${transcodeID}`, 100, 120);
     } catch (err) {
@@ -392,6 +464,44 @@ const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
 });
 
 
+
+
+const deleteObject = async (bucketName: string, objectKey: string) => {
+  const s3Client = new S3Client({ region: 'ap-southeast-2' });
+
+  try {
+    const command = new DeleteObjectCommand({
+      Bucket: bucketName,
+      Key: objectKey,
+    });
+    const response = await s3Client.send(command);
+    return response;
+  } catch (err) {
+    throw err;
+  }
+};
+
+const deleteTask = async (key : string) => {
+  try {
+   
+ 
+    if (!key) {
+      return ({ Error: true, Message: 'Key is required.' });
+
+    }
+    const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+    if(!bucketName){
+      return ({ Error: true, Message: "Bucket name not found" });
+    }
+    await deleteObject(bucketName, key);
+    await db.deleteFrom('uservideotranscoded').where('path', '=', key).execute();
+
+    return ({ Error: true, Message: 'Object deleted successfully.' });
+  } 
+  catch (error) {
+    return ({ Error: true, Message: error });
+  }
+};
 
 router.post('/poll/:transcode_id', authorization, async (req: Request, res: Response) => {
   const transcodeID = parseInt(req.params.transcode_id, 10);
@@ -487,19 +597,5 @@ router.get('/stream/:videoname', authorization, async (req: Request, res: Respon
     }
 });
 
-const deleteObject = async (bucketName: string, objectKey: string) => {
-  const s3Client = new S3Client({ region: 'ap-southeast-2' });
-
-  try {
-    const command = new DeleteObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
-    });
-    const response = await s3Client.send(command);
-    return response;
-  } catch (err) {
-    throw err;
-  }
-};
 
 module.exports = router;
