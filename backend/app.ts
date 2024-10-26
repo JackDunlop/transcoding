@@ -1,18 +1,15 @@
+var createError = require('http-errors');
 import express, { Request, Response, NextFunction } from 'express';
-import createError from 'http-errors';
-import path from 'path';
-import cookieParser from 'cookie-parser';
-import logger from 'morgan';
+var path = require('path');
+var cookieParser = require('cookie-parser');
+var logger = require('morgan');
 import dotenv from 'dotenv';
-import cors from 'cors';
 
-// Import routers and processMessages
-import indexRouter from './routes/index';
 import usersRouter from './routes/users';
 import uploadRouter from './routes/upload';
 import transcodeRouter, { processMessages } from './routes/transcode';
 import downloadRouter from './routes/download';
-
+const cors = require('cors');
 dotenv.config();
 
 const app = express();
@@ -28,7 +25,7 @@ app.use(cookieParser());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(cors());
 
-app.use('/', indexRouter);
+
 app.use('/users', usersRouter);
 app.use('/upload', uploadRouter);
 app.use('/transcode', transcodeRouter); // Now transcodeRouter is a function
@@ -53,4 +50,7 @@ app.use(function (err: any, req: Request, res: Response, next: NextFunction) {
   res.render('error');
 });
 
-export default app;
+module.exports = app;
+
+
+
