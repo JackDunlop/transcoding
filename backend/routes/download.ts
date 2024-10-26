@@ -85,4 +85,4 @@ import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 
 
 
-module.exports = router;
+export default router;

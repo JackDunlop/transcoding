@@ -12,4 +12,5 @@ router.get('/', function (req: Request, res: Response, next: NextFunction) {
 
 
 
-module.exports = router;
+export default router;
+

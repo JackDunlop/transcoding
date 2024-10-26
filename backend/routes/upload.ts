@@ -213,4 +213,4 @@ router.post('/new', authorization, async (req: Request, res: Response, next: Nex
     }
 });
 
-module.exports = router;
+export default router;

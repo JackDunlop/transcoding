@@ -591,4 +591,4 @@ router.get('/listtranscoded', authorization, async (req: Request, res: Response,
 
 
 
-module.exports = router;
+export default router;

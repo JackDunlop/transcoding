@@ -61,25 +61,6 @@ export interface UserVideosTranscodedTables {
 
 }
 
-export interface UserVideoTasks {
-    id: Generated<number>
-    userid: number
-    path: string
-    mimeType: string
-    bit_rate: number
-    codec: string
-    width: number
-    height: number
-    fps: number
-    userTranscodeID: number
-    progress: number
-}
-
-
-export type UserTasks = Selectable<UserVideoTasks>
-export type NewUserTasks = Insertable<UserVideoTasks>
-export type UserTaksUpdate = Updateable<UserVideoTasks>
-
 export type UsersVideos = Selectable<UserVideosTables>
 export type NewUsersVideos = Insertable<UserVideosTables>
 export type UsersVideosUpdate = Updateable<UserVideosTables>

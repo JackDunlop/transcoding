@@ -1,18 +1,19 @@
 import { Request, Response, NextFunction, response } from 'express';
 import { db } from './database';
 import ffmpeg, { FfprobeData } from 'fluent-ffmpeg';
-import { NewUsersVideosTranscoded, NewUserTasks } from './databasetypes'
+import { NewUsersVideosTranscoded } from './databasetypes'
 import { S3Client, DeleteObjectCommand ,GetObjectCommand  } from '@aws-sdk/client-s3';
 import { Readable, PassThrough, Stream } from 'stream';
 import { Upload } from '@aws-sdk/lib-storage';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { exec, ExecException } from 'child_process';
+import { SQSClient, SendMessageCommand,ReceiveMessageCommand, DeleteMessageCommand  } from '@aws-sdk/client-sqs';
+const sqsClient = new SQSClient({ region: 'ap-southeast-2' });
+
+
 var express = require('express');
 var router = express.Router();
-var path = require('path');
-var fs = require('fs');
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process';
+
 
 
 ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
@@ -78,6 +79,8 @@ const getVideoMetadata = async (videoUrl: string): Promise<VideoMetadata> => {
 
 import { promisify } from 'util'; 
 import Memcached from 'memcached';
+import { ReturnValue } from '@aws-sdk/client-dynamodb';
+import { error } from 'console';
 
 
 interface MemcachedClient extends Memcached {
@@ -133,375 +136,290 @@ const retrieveObjectUrl = async (bucketName: string, objectKey: string): Promise
   }
 };
 
-router.post('/resume/:key', authorization,async (req: Request, res: Response, next: NextFunction) => {
-  
-  const key = req.params.key;
-  const user = (req as any).user;
-  const username = user?.username;
-  
- const s3Key = key as string;
-
-  const taskMetaData = await db.selectFrom("usertasks").selectAll().where('path', '=', s3Key).execute();
-  if (taskMetaData.length < 0) {
-    return res.status(404).json({ Error: true, Message: 'Cannot find task.' });
-  }
-  const videoTaskMetaData = taskMetaData[0];
-
-
-
-  await connectToMemcached();
-
-  const resolution = `${videoTaskMetaData.width}x${videoTaskMetaData.height}`;
-  const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
-  if(!bucketName){
-    return res.status(404).json({ Error: true, Message: 'Cannot find bucketName.' });
-  }
-  const videoUrl = await retrieveObjectUrl(bucketName, s3Key);
-
-  const command = ffmpeg(videoUrl)
-.inputOptions(['-loglevel', 'debug'])
-.size(resolution)
-.videoBitrate(videoTaskMetaData.bitrate)
-.videoCodec(videoTaskMetaData.codec)
-.fps(videoTaskMetaData.framerate)
-.format('mp4')
-.outputOptions([
-  '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-]);
-
-const videoName : string = videoTaskMetaData.path.split('/').pop()?.split('.')[0];
-const videoNameExt = videoName.split(".")[0];
-const videoNameWithoutExt = videoName.split(".")[1];
-const videoNameWithTranscode = videoNameExt + "_" + videoTaskMetaData.transcodeID;
-const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
-const videoTask = `${videoNameWithTranscode}.${videoNameWithoutExt}`;
-const s3ProgressKey = `users/${username}/task/${videoTask}`;
-const ffmpegStream = new PassThrough();
-let ffmpegProc : any;
-command
-.output(ffmpegStream)
-.on('start', (commandLine) => {
-  console.log(commandLine);
-  const ffmpegCommand = command as unknown as {
-    ffmpegProc: { pid: number };
-  };
-
-  if (ffmpegCommand.ffmpegProc) {
-    const pid = ffmpegCommand.ffmpegProc.pid;
-    ffmpegProc = command as unknown as { ffmpegProc: { pid: number } };
-  }
-  
-})
-.on('progress', async (progress) => {
-  const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
-  
-  try {
-    await memcached.aSet(`transcode_${videoTaskMetaData.transcodeID}`, percent, 120);
-  } catch (err) {
-    await connectToMemcached();
-    console.error('Error updating cache:', err);
-  }
-
-  
-})
-.on('end', async () => {
-  await deleteTask(s3ProgressKey);
-  try {
-    await memcached.aSet(`transcode_${videoTaskMetaData.transcodeID}`, 100, 120);
-  } catch (err) {
-    await connectToMemcached();
-    console.error('Error updating cache:', err);
-  }
-})
-.on('error', () => {
-
-  if (ffmpegProc) {
-    ffmpegProc.ffmpegProc.kill('SIGKILL');
-  
+// Define the Job interface and jobQueue
+interface Job {
+  transcodeID: number;
+  videoName: string;
+  width: number;
+  height: number;
+  bitrate: number;
+  codec: string;
+  format: string;
+  framerate: number;
+  username: string;
+  userForeignKey: number;
+  originalName: string;
+  uploadedVideoPath: string;
+  s3Key: string;
 }
-})
-.run();
 
+const jobQueue: Job[] = [];
 
-});
-
-
-
-router.post('/video/:video_name', authorization,async (req: Request, res: Response, next: NextFunction) => {
- 
+router.post('/video/:video_name', authorization, async (req: Request, res: Response, next: NextFunction) => {
   const user = (req as any).user;
   const username = user?.username;
   const checkUserIsExisting = await db.selectFrom('users').selectAll().where('username', '=', username).execute();
   if (checkUserIsExisting.length === 0) {
-      return res.status(403).json({ Error: true, Message: 'User does not exist! using jwt without a registered user.' });
+    return res.status(403).json({ Error: true, Message: 'User does not exist! using jwt without a registered user.' });
   }
 
   if (!username || typeof username !== 'string' || username.trim() === '') {
-      return res.status(404).json({ error: true, message: "Username failed to be retrieved" });
+    return res.status(404).json({ error: true, message: 'Username failed to be retrieved' });
   }
 
   const userForeignKeyFind = await db.selectFrom('users').select('id').where('username', '=', username).execute();
   if (userForeignKeyFind.length < 0) {
-      return res.status(404).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
+    return res.status(404).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
   }
   const userForeignKey = userForeignKeyFind[0].id;
-  
+
   const userTranscodedIDFind = await db.selectFrom('users').select('id').where('username', '=', username).execute();
   if (userTranscodedIDFind.length < 0) {
-      return res.status(404).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
+    return res.status(404).json({ Error: true, Message: 'Cannot find user who uploaded this video.' });
   }
   const userTranscodedID = userTranscodedIDFind[0].id;
 
-
   let transcodeID = 0;
 
-
-
-  const usersTranscodedVideos = await db.selectFrom("uservideotranscoded").selectAll().where('userid', '=', userTranscodedID).execute();
+  const usersTranscodedVideos = await db
+    .selectFrom('uservideotranscoded')
+    .selectAll()
+    .where('userid', '=', userTranscodedID)
+    .execute();
   if (usersTranscodedVideos.length < 0) {
-      transcodeID = 0;
+    transcodeID = 0;
+  } else {
+    const transodeIDSearchLength = usersTranscodedVideos.length;
+    transcodeID = transodeIDSearchLength + 1;
   }
-  else {
-      const transodeIDSearchLength = usersTranscodedVideos.length
-      transcodeID = transodeIDSearchLength + 1;
+
+  const videoName = req.params.video_name;
+  const { width, height, bitrate, codec, format, framerate } = req.body;
+
+  if (!videoName || !width || !bitrate || !codec || !format || !framerate || !height) {
+    return res.status(400).json({ error: true, message: 'You are missing a required parameter...' });
   }
 
- 
-  res.status(200).json({ message: 'Transcoding started', transcodeID });
+  const videoOriginalNameFind = await db
+    .selectFrom('uservideos')
+    .select('originalName')
+    .where('newFilename', '=', videoName)
+    .execute();
+  const originalName = videoOriginalNameFind[0].originalName;
 
-    const videoName = req.params.video_name;
-    const { width, height, bitrate, codec, format, framerate } = req.body;
+  const userVideoPathQuery = await db
+    .selectFrom('uservideos')
+    .select('path')
+    .where('newFilename', '=', videoName)
+    .execute();
 
-    if (!videoName || !width || !bitrate || !codec || !format || !framerate || !height) {
-      return res.status(400).json({ error: true, message: 'You are missing a required parameter...' });
+  if (userVideoPathQuery.length === 0) {
+    return res.status(404).json({ error: true, message: 'No Video has been uploaded matching that name.' });
+  }
+
+  const uploadedVideoPath = userVideoPathQuery[0].path;
+  const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
+  if (!bucketName) {
+    throw new Error('Missing required Cognito configuration');
+  }
+  await connectToMemcached();
+  const videoUrl = await retrieveObjectUrl(bucketName, uploadedVideoPath);
+
+  const videoNameExt = videoName.split('.')[0];
+  const videoNameWithoutExt = videoName.split('.')[1];
+  const videoNameWithTranscode = videoNameExt + '_' + transcodeID;
+  const videoNameWithTranscodeWithExt = videoNameWithTranscode + '.' + videoNameWithoutExt;
+  const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
+
+  const job = {
+    transcodeID,
+    videoName,
+    width,
+    height,
+    bitrate,
+    codec,
+    format,
+    framerate,
+    username,
+    userForeignKey,
+    originalName,
+    uploadedVideoPath,
+    s3Key,
+  };
+
+
+  const queueUrl = 'https://sqs.ap-southeast-2.amazonaws.com/901444280953/n11431415-assignment'; 
+
+  const params = {
+    QueueUrl: queueUrl,
+    MessageBody: JSON.stringify(job),
+  };
+
+  try {
+    await sqsClient.send(new SendMessageCommand(params));
+    res.status(200).json({ message: 'Transcoding job queued', transcodeID });
+  } catch (error) {
+    console.error('Error sending message to SQS:', error);
+    res.status(500).json({ error: true, message: 'Failed to queue transcoding job.' });
+  }
+});
+
+async function processMessages() {
+  const queueUrl = 'https://sqs.ap-southeast-2.amazonaws.com/901444280953/n11431415-assignment'; // Replace with your queue URL
+
+  const params = {
+    QueueUrl: queueUrl,
+    MaxNumberOfMessages: 1, 
+    WaitTimeSeconds: 20,    
+  };
+
+  try {
+    const data = await sqsClient.send(new ReceiveMessageCommand(params));
+
+    if (data.Messages && data.Messages.length > 0) {
+      for (const message of data.Messages) {
+        if(!message.Body){
+          return {error : true}
+        }
+        const job = JSON.parse(message.Body);
+
+   
+        await processJob(job);
+
+     
+        await sqsClient.send(
+          new DeleteMessageCommand({
+            QueueUrl: queueUrl,
+            ReceiptHandle: message.ReceiptHandle,
+          })
+        );
+      }
     }
+  } catch (error) {
+    console.error('Error receiving or processing messages from SQS:', error);
+  } finally {
 
-    const videoOriginalNameFind = await db.selectFrom("uservideos").select("originalName").where("newFilename", '=', videoName).execute();
-    const originalName = videoOriginalNameFind[0].originalName;
+    processMessages();
+  }
+}
+async function processJob(job: Job) {
+  const {
+    transcodeID,
+    videoName,
+    width,
+    height,
+    bitrate,
+    codec,
+    format,
+    framerate,
+    username,
+    userForeignKey,
+    originalName,
+    uploadedVideoPath,
+    s3Key,
+  } = job;
 
-    const userVideoPathQuery = await db
-      .selectFrom('uservideos')
-      .select('path')
-      .where('newFilename', '=', videoName)
-      .execute();
-
-    if (userVideoPathQuery.length === 0) {
-      return res.status(404).json({ error: true, message: 'No Video has been uploaded matching that name.' });
-    }
-
-    const uploadedVideoPath = userVideoPathQuery[0].path;
+  try {
     const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
     if (!bucketName) {
-      throw new Error('Missing required Cognito configuration');
+      throw new Error('Bucket name not found.');
     }
-    await connectToMemcached();
     const videoUrl = await retrieveObjectUrl(bucketName, uploadedVideoPath);
 
     const resolution = `${width}x${height}`;
 
     const command = ffmpeg(videoUrl)
-  .inputOptions(['-loglevel', 'debug'])
-  .size(resolution)
-  .videoBitrate(bitrate)
-  .videoCodec(codec)
-  .fps(framerate)
-  .format('mp4')
-  .outputOptions([
-    '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-  ]);
+      .inputOptions(['-loglevel', 'debug'])
+      .size(resolution)
+      .videoBitrate(bitrate)
+      .videoCodec(codec)
+      .fps(framerate)
+      .format('mp4')
+      .outputOptions(['-movflags', 'frag_keyframe+empty_moov+default_base_moof']);
 
- 
-  const videoNameExt = videoName.split(".")[0];
-  const videoNameWithoutExt = videoName.split(".")[1];
-  const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
-  const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
-  const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
-  const videoTask = `${videoNameWithTranscode}.${videoNameWithoutExt}`;
-  const s3ProgressKey = `users/${username}/task/${videoTask}`;
-const ffmpegStream = new PassThrough();
-let ffmpegProc : any;
-command
-  .output(ffmpegStream)
-  .on('start', (commandLine) => {
-    console.log(commandLine);
-    const ffmpegCommand = command as unknown as {
-      ffmpegProc: { pid: number };
-    };
-
-    if (ffmpegCommand.ffmpegProc) {
-      const pid = ffmpegCommand.ffmpegProc.pid;
-      ffmpegProc = command as unknown as { ffmpegProc: { pid: number } };
-    }
-    
-  })
-  .on('progress', async (progress) => {
-    const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
-    
-    try {
-      await memcached.aSet(`transcode_${transcodeID}`, percent, 120);
-    } catch (err) {
-      await connectToMemcached();
-      console.error('Error updating cache:', err);
-    }
-  
-    if (percent >= 49 && percent <= 51) {
-      const roundedPercent = Math.round(percent); 
-      const uploadTask = new Upload({
-        client: s3Client,
-        params: {
-          Bucket: bucketName,
-          Key: s3ProgressKey,
-          Body: ffmpegStream,
-          ContentType: 'video/mp4',
-        },
-      });
-  
-      uploadTask.on('httpUploadProgress', (progress) => {
-      
-      });
-  
-      try {
-        await uploadTask.done(); 
-      } catch (error) {
-        console.error('Error during upload:', error);
-      }
-  
-      try {
-        const metadataTasks = {
-          userid: userForeignKey,
-          path: s3ProgressKey,
-          mimeType: format,
-          bit_rate: bitrate,
-          codec: codec,
-          width: width,
-          height: height,
-          fps: framerate,
-          userTranscodeID: transcodeID,
-          progress: percent,
+    const ffmpegStream = new PassThrough();
+    let ffmpegProc: any;
+    command
+      .output(ffmpegStream)
+      .on('start', (commandLine) => {
+        console.log(commandLine);
+        const ffmpegCommand = command as unknown as {
+          ffmpegProc: { pid: number };
         };
-  
-        try {
-          await db.insertInto('usertasks').values(metadataTasks).executeTakeFirst();
-          console.log("Metadata added to the database");
-        } catch (error) {
-          console.error('Error during uploading metadata:', error);
+
+        if (ffmpegCommand.ffmpegProc) {
+          const pid = ffmpegCommand.ffmpegProc.pid;
+          ffmpegProc = command as unknown as { ffmpegProc: { pid: number } };
         }
-        
-       
-      } catch (error) {
-        console.error('Error saving metadata:', error);
-      }
-    }
-  })
-  
-  .on('end', async () => {
-    await deleteTask(s3ProgressKey);
-    try {
-      await memcached.aSet(`transcode_${transcodeID}`, 100, 120);
-    } catch (err) {
-      await connectToMemcached();
-      console.error('Error updating cache:', err);
-    }
-  })
-  .on('error', () => {
+      })
+      .on('progress', async (progress) => {
+        const percent = typeof progress.percent === 'number' ? parseFloat(progress.percent.toFixed(2)) : 0;
 
-    if (ffmpegProc) {
-      ffmpegProc.ffmpegProc.kill('SIGKILL');
-    
-  }
-  })
-  .run();
+        try {
+          await memcached.aSet(`transcode_${transcodeID}`, percent, 120);
+        } catch (err) {
+          await connectToMemcached();
+          console.error('Error updating cache:', err);
+        }
+      })
+      .on('end', async () => {
+        try {
+          await memcached.aSet(`transcode_${transcodeID}`, 100, 120);
+        } catch (err) {
+          await connectToMemcached();
+          console.error('Error updating cache:', err);
+        }
+      })
+      .on('error', () => {
+        if (ffmpegProc) {
+          ffmpegProc.ffmpegProc.kill('SIGKILL');
+        }
+      })
+      .run();
 
-
-
-  
-  
-  
-
-
-const upload = new Upload({
-  client: s3Client,
-  params: {
-    Bucket: bucketName,
-    Key: s3Key,
-    Body: ffmpegStream,
-    ContentType: 'video/mp4',
-  },
-});
-
-upload.on('httpUploadProgress', (progress) => {
-});
-
-
-
-await upload.done();
-
-
-const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
-
-
-(async () => {
-  try {
-    const metadataFromTranscode = await getVideoMetadata(transcodeUrl);
-    const metadata: NewUsersVideosTranscoded = {
-      userid: userForeignKey,
-      originalName: originalName,
-      mimeType: format,
-      size: metadataFromTranscode.size,
-      path: s3Key,
-      newFilename: videoNameWithTranscodeWithExt,
-      duration: metadataFromTranscode.duration,
-      bit_rate: bitrate,
-      codec: metadataFromTranscode.codec,
-      width: metadataFromTranscode.width,
-      height: metadataFromTranscode.height,
-      userTranscodeID: transcodeID,
-    };
-    await db.insertInto('uservideotranscoded').values(metadata).executeTakeFirst();
-  } catch (error) {
-  }
-})();
-});
-
-
-
-
-const deleteObject = async (bucketName: string, objectKey: string) => {
-  const s3Client = new S3Client({ region: 'ap-southeast-2' });
-
-  try {
-    const command = new DeleteObjectCommand({
-      Bucket: bucketName,
-      Key: objectKey,
+    const upload = new Upload({
+      client: s3Client,
+      params: {
+        Bucket: bucketName,
+        Key: s3Key,
+        Body: ffmpegStream,
+        ContentType: 'video/mp4',
+      },
     });
-    const response = await s3Client.send(command);
-    return response;
-  } catch (err) {
-    throw err;
-  }
-};
 
-const deleteTask = async (key : string) => {
-  try {
+    upload.on('httpUploadProgress', (progress) => {});
+
+    await upload.done();
+
+    const transcodeUrl = await retrieveObjectUrl(bucketName, s3Key);
+
+    try {
+      const metadataFromTranscode = await getVideoMetadata(transcodeUrl);
+      const metadata: NewUsersVideosTranscoded = {
+        userid: userForeignKey,
+        originalName: originalName,
+        mimeType: format,
+        size: metadataFromTranscode.size,
+        path: s3Key,
+        newFilename: `${videoName}_${transcodeID}.${videoName.split('.').pop()}`,
+        duration: metadataFromTranscode.duration,
+        bit_rate: bitrate,
+        codec: metadataFromTranscode.codec,
+        width: metadataFromTranscode.width,
+        height: metadataFromTranscode.height,
+        userTranscodeID: transcodeID,
+      };
+      await db.insertInto('uservideotranscoded').values(metadata).executeTakeFirst();
+    } catch (error) {
+      console.error('Error saving metadata:', error);
+    }
+  } catch (error) {
+    console.error(`Error processing job ${transcodeID}:`, error);
    
- 
-    if (!key) {
-      return ({ Error: true, Message: 'Key is required.' });
-
-    }
-    const bucketName = await getParameterValue('/n11431415/assignment/bucketName');
-    if(!bucketName){
-      return ({ Error: true, Message: "Bucket name not found" });
-    }
-    await deleteObject(bucketName, key);
-    await db.deleteFrom('uservideotranscoded').where('path', '=', key).execute();
-
-    return ({ Error: true, Message: 'Object deleted successfully.' });
-  } 
-  catch (error) {
-    return ({ Error: true, Message: error });
   }
-};
+}
+
+
 
 router.post('/poll/:transcode_id', authorization, async (req: Request, res: Response) => {
   const transcodeID = parseInt(req.params.transcode_id, 10);
@@ -598,4 +516,7 @@ router.get('/stream/:videoname', authorization, async (req: Request, res: Respon
 });
 
 
-module.exports = router;
+export default router;
+
+
+export { processMessages };

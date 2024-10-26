@@ -8,6 +8,7 @@ import {
   GetSecretValueCommand,
 } from '@aws-sdk/client-secrets-manager'
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm'
+import { processMessages }  from './transcode'
 
 
 
@@ -76,6 +77,7 @@ async function getParameterValue(parameter_name: string): Promise<string | undef
   db = new Kysely<Database>({
     dialect,
   })
+  processMessages();
 })()
 
 export { db, getParameterValue }
