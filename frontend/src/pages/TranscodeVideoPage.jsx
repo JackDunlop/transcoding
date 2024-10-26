@@ -6,17 +6,59 @@ const API_URL = process.env.REACT_APP_API_URL;
 export default function TranscodeVideoPage() {
     const location = useLocation();
     const navigate = useNavigate();
-    const { videoNameUploaded } = location.state || {};
+    const initialVideoNameUploaded = location.state?.videoNameUploaded || localStorage.getItem('videoNameUploaded');
 
-    const [width, setWidth] = useState('');
-    const [height, setHeight] = useState('');
-    const [bitrate, setBitrate] = useState('');
-    const [codec, setCodec] = useState('');
-    const [format, setFormat] = useState('');
-    const [framerate, setFramerate] = useState('');
+    const [videoNameUploaded, setVideoNameUploaded] = useState(initialVideoNameUploaded || '');
+
+    const [width, setWidth] = useState(localStorage.getItem('width') || '');
+    const [height, setHeight] = useState(localStorage.getItem('height') || '');
+    const [bitrate, setBitrate] = useState(localStorage.getItem('bitrate') || '');
+    const [codec, setCodec] = useState(localStorage.getItem('codec') || '');
+    const [format, setFormat] = useState(localStorage.getItem('format') || '');
+    const [framerate, setFramerate] = useState(localStorage.getItem('framerate') || '');
     const [status, setStatus] = useState('');
     const [progress, setProgress] = useState(0);
-    const [transcodeID, setTranscodeID] = useState('');
+    const [transcodeID, setTranscodeID] = useState(localStorage.getItem('transcodeID') || '');
+
+    useEffect(() => {
+        localStorage.setItem('width', width);
+    }, [width]);
+
+    useEffect(() => {
+        localStorage.setItem('height', height);
+    }, [height]);
+
+    useEffect(() => {
+        localStorage.setItem('bitrate', bitrate);
+    }, [bitrate]);
+
+    useEffect(() => {
+        localStorage.setItem('codec', codec);
+    }, [codec]);
+
+    useEffect(() => {
+        localStorage.setItem('format', format);
+    }, [format]);
+
+    useEffect(() => {
+        localStorage.setItem('framerate', framerate);
+    }, [framerate]);
+
+   
+    useEffect(() => {
+        if (videoNameUploaded) {
+            localStorage.setItem('videoNameUploaded', videoNameUploaded);
+        }
+    }, [videoNameUploaded]);
+
+ 
+    useEffect(() => {
+        if (transcodeID && videoNameUploaded) {
+            setStatus('Transcoding in progress');
+            startPolling(transcodeID);
+        }
+        
+    }, []); 
 
     const handleTranscode = () => {
         if (!videoNameUploaded) {
@@ -44,11 +86,11 @@ export default function TranscodeVideoPage() {
             if (data.error) {
                 setStatus('Transcoding failed');
             } else {
-                const transcodeID = data.transcodeID;
-                if (transcodeID) {
-                    localStorage.setItem('transcodeID', transcodeID); 
-                    setTranscodeID(transcodeID); 
-                    startPolling(transcodeID);
+                const newTranscodeID = data.transcodeID;
+                if (newTranscodeID) {
+                    localStorage.setItem('transcodeID', newTranscodeID); 
+                    setTranscodeID(newTranscodeID); 
+                    startPolling(newTranscodeID);
                     setStatus('Transcoding started');
                 }
             }
@@ -59,15 +101,16 @@ export default function TranscodeVideoPage() {
         });
     };
 
-    const videoNameExt = videoNameUploaded.split(".")[0];
-    const videoNameWithoutExt = videoNameUploaded.split(".")[1];
-    const videoNameWithTranscode = videoNameExt + "_" + transcodeID;
-    const videoNameWithTranscodeWithExt = videoNameWithTranscode+ "." +videoNameWithoutExt;
+    const videoNameParts = videoNameUploaded.split(".");
+    const videoNameExt = videoNameParts[0];
+    const videoNameWithoutExt = videoNameParts[1];
+    const videoNameWithTranscode = `${videoNameExt}_${transcodeID}`;
+    const videoNameWithTranscodeWithExt = `${videoNameWithTranscode}.${videoNameWithoutExt}`;
 
-    const startPolling = (transcodeID) => {
+    const startPolling = (currentTranscodeID) => {
         const interval = setInterval(() => {
-            console.log(`${API_URL}/transcode/poll/${transcodeID}`);
-            fetch(`${API_URL}/transcode/poll/${transcodeID}`, {
+            console.log(`${API_URL}/transcode/poll/${currentTranscodeID}`);
+            fetch(`${API_URL}/transcode/poll/${currentTranscodeID}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -91,6 +134,12 @@ export default function TranscodeVideoPage() {
                     if (data.status === 'finished' || data.status === 'error') {
                         clearInterval(interval);
                         localStorage.removeItem('transcodeID');  
+                        setTranscodeID('');
+                        if (data.status === 'finished') {
+                            setStatus('Transcoding finished');
+                        } else {
+                            setStatus('Transcoding encountered an error');
+                        }
                     }
                 }
             })
@@ -99,11 +148,8 @@ export default function TranscodeVideoPage() {
             });
         }, 2500);
     };
-    
-
 
     const handleDownload = () => {
-       
         const username = localStorage.getItem("username");
         const s3Key = `users/${username}/transcoded/${videoNameWithTranscodeWithExt}`;
         const url = `${API_URL}/download/${videoNameWithTranscodeWithExt}`;
@@ -120,9 +166,9 @@ export default function TranscodeVideoPage() {
             return response.blob();
         })
         .then(blob => {
-            const url = window.URL.createObjectURL(new Blob([blob]));
+            const downloadUrl = window.URL.createObjectURL(new Blob([blob]));
             const link = document.createElement('a');
-            link.href = url;
+            link.href = downloadUrl;
             link.setAttribute('download', `${videoNameUploaded}_transcoded.mp4`);
             document.body.appendChild(link);
             link.click();
@@ -139,44 +185,73 @@ export default function TranscodeVideoPage() {
             <h1>Transcoding Video</h1>
             {videoNameUploaded ? (
                 <>
-                    <form className="transcode-form">
+                    <form className="transcode-form" onSubmit={(e) => e.preventDefault()}>
                         <div className="form-group">
                             <label>
                                 Width:
-                                <input type="number" value={width} onChange={(e) => setWidth(e.target.value)} />
+                                <input
+                                    type="number"
+                                    value={width}
+                                    onChange={(e) => setWidth(e.target.value)}
+                                />
                             </label>
                         </div>
                         <div className="form-group">
                             <label>
                                 Height:
-                                <input type="number" value={height} onChange={(e) => setHeight(e.target.value)} />
+                                <input
+                                    type="number"
+                                    value={height}
+                                    onChange={(e) => setHeight(e.target.value)}
+                                />
                             </label>
                         </div>
                         <div className="form-group">
                             <label>
                                 Bitrate:
-                                <input type="text" value={bitrate} onChange={(e) => setBitrate(e.target.value)} />
+                                <input
+                                    type="text"
+                                    value={bitrate}
+                                    onChange={(e) => setBitrate(e.target.value)}
+                                />
                             </label>
                         </div>
                         <div className="form-group">
                             <label>
                                 Codec:
-                                <input type="text" value={codec} onChange={(e) => setCodec(e.target.value)} />
+                                <input
+                                    type="text"
+                                    value={codec}
+                                    onChange={(e) => setCodec(e.target.value)}
+                                />
                             </label>
                         </div>
                         <div className="form-group">
                             <label>
                                 Format:
-                                <input type="text" value={format} onChange={(e) => setFormat(e.target.value)} />
+                                <input
+                                    type="text"
+                                    value={format}
+                                    onChange={(e) => setFormat(e.target.value)}
+                                />
                             </label>
                         </div>
                         <div className="form-group">
                             <label>
                                 Framerate:
-                                <input type="text" value={framerate} onChange={(e) => setFramerate(e.target.value)} />
+                                <input
+                                    type="text"
+                                    value={framerate}
+                                    onChange={(e) => setFramerate(e.target.value)}
+                                />
                             </label>
                         </div>
-                        <button type="button" onClick={handleTranscode} className="transcode-btn">
+                        <button
+                            type="button"
+                            onClick={handleTranscode}
+                            className="transcode-btn"
+                            disabled={transcodeID !== ''}
+                        >
                             Start Transcoding
                         </button>
                     </form>
@@ -186,14 +261,17 @@ export default function TranscodeVideoPage() {
                         <progress value={progress} max={100}></progress>
                     </div>
                     {status === 'finished' && (
-                        <button type="button" onClick={handleDownload} className="download-btn">
+                        <button
+                            type="button"
+                            onClick={handleDownload}
+                            className="download-btn"
+                        >
                             Download Video
                         </button>
                     )}
                 </>
             ) : (
                 <p>No video selected for transcoding.</p>
-                
             )}
         </div>
     );

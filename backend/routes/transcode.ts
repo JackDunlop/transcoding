@@ -92,7 +92,8 @@ const memcachedAddress = 'n11431415.km2jzi.cfg.apse2.cache.amazonaws.com:11211';
 
 let memcached: MemcachedClient;
 memcached = new Memcached(memcachedAddress) as MemcachedClient;
-
+memcached.aGet = promisify(memcached.get);
+memcached.aSet = promisify(memcached.set);
 async function connectToMemcached(): Promise<void> {
   memcached = new Memcached(memcachedAddress) as MemcachedClient;
   memcached.on("failure", (details) => {
@@ -515,8 +516,7 @@ router.get('/stream/:videoname', authorization, async (req: Request, res: Respon
     }
 });
 
-
+export { processMessages };
 export default router;
 
 
-export { processMessages };
